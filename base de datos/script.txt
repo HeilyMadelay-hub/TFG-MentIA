@@ -1,0 +1,748 @@
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) UNIQUE,
+  email VARCHAR(255) UNIQUE, 
+  password_hash VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  is_admin BOOLEAN DEFAULT false
+);
+
+CREATE TABLE documents (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(255),
+  chromadb_id VARCHAR(255) UNIQUE,
+  uploaded_by INT,
+  content_type VARCHAR(50), -- Para indicar si es PDF, texto, etc.
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE acceso_documentos_usuario (
+  id_document INT,
+  id_user INT,
+  linked_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id_document, id_user)
+);
+
+CREATE TABLE chats (
+  id SERIAL PRIMARY KEY,
+  id_user INT,
+  name_chat VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE messages (
+  id SERIAL,
+  id_chat INT,
+  question TEXT,
+  answer TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id, created_at)
+) PARTITION BY RANGE (created_at);
+
+
+CREATE TABLE messages_y2025m01 PARTITION OF messages
+    FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+
+CREATE INDEX idx_notifications_user ON notifications(id_user, is_read, created_at);
+CREATE INDEX idx_documents_uploaded_by ON documents(uploaded_by);
+CREATE INDEX idx_chats_id_user ON chats(id_user);
+CREATE INDEX idx_messages_id_chat ON messages(id_chat);
+CREATE INDEX idx_acceso_id_user ON acceso_documentos_usuario(id_user);
+
+ALTER TABLE users ADD COLUMN email_encrypted BYTEA;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION encrypt_email(email_text TEXT) 
+RETURNS BYTEA 
+LANGUAGE plpgsql 
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  RETURN pgp_sym_encrypt(email_text, 'mi_clave_secreta');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION decrypt_email(email_encrypted BYTEA) 
+RETURNS TEXT 
+LANGUAGE plpgsql 
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  RETURN pgp_sym_decrypt(email_encrypted, 'mi_clave_secreta');
+END;
+$$;
+
+-- Trigger que encripta automáticamente el email
+CREATE OR REPLACE FUNCTION encrypt_email_trigger() 
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  NEW.email_encrypted = pgp_sym_encrypt(NEW.email, 'mi_clave_secreta');
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION create_message_partition_for_month(year INT, month INT)
+RETURNS VOID 
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    partition_name TEXT;
+    start_date TEXT;
+    end_date TEXT;
+BEGIN
+    -- Formato: messages_y2025m01
+    partition_name := 'messages_y' || year || 'm' || LPAD(month::TEXT, 2, '0');
+    
+    -- Fechas para el rango
+    start_date := year || '-' || LPAD(month::TEXT, 2, '0') || '-01';
+    
+    -- Calcula el primer día del siguiente mes
+    IF month = 12 THEN
+        end_date := (year + 1) || '-01-01';
+    ELSE
+        end_date := year || '-' || LPAD((month + 1)::TEXT, 2, '0') || '-01';
+    END IF;
+    
+    -- Verifica si la partición ya existe
+    IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = partition_name) THEN
+        EXECUTE 'CREATE TABLE ' || partition_name || ' PARTITION OF messages
+                 FOR VALUES FROM (''' || start_date || ''') TO (''' || end_date || ''')';
+    END IF;
+END;
+$$;
+
+-- Función para asegurar que existan particiones futuras
+CREATE OR REPLACE FUNCTION ensure_message_partitions_exist(months_ahead INT DEFAULT 3)
+RETURNS VOID 
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    current_date TIMESTAMP := CURRENT_DATE;
+    year INT;
+    month INT;
+BEGIN
+    FOR i IN 0..months_ahead LOOP
+        year := EXTRACT(YEAR FROM current_date + (i || ' month')::INTERVAL);
+        month := EXTRACT(MONTH FROM current_date + (i || ' month')::INTERVAL);
+        
+        PERFORM create_message_partition_for_month(year, month);
+    END LOOP;
+END;
+$$;
+
+
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.acceso_documentos_usuario ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages_y2025m01 ENABLE ROW LEVEL SECURITY;
+
+-- Añadir columna para almacenar el UUID de Supabase Auth
+ALTER TABLE users ADD COLUMN auth_id UUID UNIQUE;
+
+-- Índice para búsquedas rápidas por auth_id
+CREATE INDEX idx_users_auth_id ON users(auth_id);
+
+
+-- Política para documents: creadores pueden ver/editar sus documentos, usuarios con acceso pueden verlos
+CREATE POLICY documents_owner_policy ON documents
+    USING (uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid()) OR 
+          (EXISTS (SELECT 1 FROM acceso_documentos_usuario 
+                  WHERE id_document = documents.id AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid()))));
+
+-- Política para acceso_documentos_usuario: usuarios solo ven sus propios accesos
+CREATE POLICY acceso_policy ON acceso_documentos_usuario
+    USING (id_user IN (SELECT id FROM users WHERE auth_id = auth.uid()) OR 
+          (EXISTS (SELECT 1 FROM documents 
+                  WHERE id = acceso_documentos_usuario.id_document AND 
+                        uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid()))));
+
+-- Política para chats: usuarios solo ven sus propias conversaciones
+CREATE POLICY chats_policy ON chats
+    USING (id_user IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+-- Política para messages: usuarios solo ven mensajes de sus conversaciones
+CREATE POLICY messages_policy ON messages
+    USING (EXISTS (SELECT 1 FROM chats 
+                  WHERE id = messages.id_chat AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())));
+
+-- Política para notificaciones: usuarios solo ven sus propias notificaciones
+CREATE POLICY notifications_policy ON notifications
+    USING (id_user IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+-- Función que verifica que auth_id no sea NULL
+CREATE OR REPLACE FUNCTION check_auth_id() 
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.auth_id IS NULL THEN
+    RAISE EXCEPTION 'auth_id no puede ser NULL';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger que se ejecuta antes de INSERT en users
+CREATE TRIGGER enforce_auth_id_on_insert
+BEFORE INSERT ON users
+FOR EACH ROW
+EXECUTE FUNCTION check_auth_id();
+
+-- Trigger que se ejecuta antes de UPDATE en users
+CREATE TRIGGER enforce_auth_id_on_update
+BEFORE UPDATE ON users
+FOR EACH ROW
+WHEN (NEW.auth_id IS NULL)
+EXECUTE FUNCTION check_auth_id();
+
+-- Política explícita para la partición messages_y2025m01
+CREATE POLICY messages_y2025m01_policy ON messages_y2025m01
+    USING (EXISTS (SELECT 1 FROM chats 
+                  WHERE id = messages_y2025m01.id_chat AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())));
+
+CREATE OR REPLACE FUNCTION check_auth_id() 
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF NEW.auth_id IS NULL THEN
+    RAISE EXCEPTION 'auth_id no puede ser NULL';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- Recrear el trigger después de recrear la función
+CREATE TRIGGER encrypt_email_on_insert_update
+BEFORE INSERT OR UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION encrypt_email_trigger();
+
+-- Recrear el trigger para auth_id
+CREATE TRIGGER enforce_auth_id_on_insert
+BEFORE INSERT ON users
+FOR EACH ROW
+EXECUTE FUNCTION check_auth_id();
+
+CREATE TRIGGER enforce_auth_id_on_update
+BEFORE UPDATE ON users
+FOR EACH ROW
+WHEN (NEW.auth_id IS NULL)
+EXECUTE FUNCTION check_auth_id();
+
+
+-- Crea una función que determine si un usuario es administrador
+CREATE OR REPLACE FUNCTION is_admin()
+RETURNS BOOLEAN
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  admin_status BOOLEAN;
+BEGIN
+  SELECT is_admin INTO admin_status FROM users 
+  WHERE auth_id = auth.uid() 
+  LIMIT 1;
+  
+  RETURN COALESCE(admin_status, false);
+END;
+$$
+LANGUAGE plpgsql;
+
+-- Crea una nueva política simplificada
+CREATE POLICY users_policy ON users
+    USING (auth.uid() = auth_id OR is_admin());
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+ALTER TABLE users DISABLE TRIGGER encrypt_email_on_insert_update;
+
+CREATE POLICY users_insert_policy 
+ON users 
+FOR INSERT 
+WITH CHECK (true);
+
+SELECT username FROM users;
+
+DROP POLICY IF EXISTS documents_owner_policy ON documents;
+
+DROP POLICY IF EXISTS acceso_policy ON acceso_documentos_usuario;
+
+CREATE POLICY documents_owner_policy ON documents
+    USING (
+        uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        OR 
+        id IN (
+            SELECT id_document FROM acceso_documentos_usuario 
+            WHERE id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        )
+    );
+
+-- 3. Crear la nueva política corregida para acceso a documentos
+CREATE POLICY acceso_policy ON acceso_documentos_usuario
+    USING (
+        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        OR 
+        id_document IN (
+            SELECT id FROM documents 
+            WHERE uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        )
+    );
+
+-- 4. Agregar políticas adicionales para INSERT, UPDATE y DELETE si es necesario
+-- Para documentos
+CREATE POLICY documents_insert_policy ON documents
+    FOR INSERT
+    WITH CHECK (uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+CREATE POLICY documents_update_policy ON documents
+    FOR UPDATE
+    USING (uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+CREATE POLICY documents_delete_policy ON documents
+    FOR DELETE
+    USING (uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid()));
+
+-- Para acceso a documentos
+CREATE POLICY acceso_insert_policy ON acceso_documentos_usuario
+    FOR INSERT
+    WITH CHECK (
+        -- Solo el propietario del documento puede dar acceso
+        EXISTS (
+            SELECT 1 FROM documents 
+            WHERE id = id_document 
+            AND uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        )
+    );
+
+CREATE POLICY acceso_delete_policy ON acceso_documentos_usuario
+    FOR DELETE
+    USING (
+        -- El propietario del documento puede revocar cualquier acceso
+        EXISTS (
+            SELECT 1 FROM documents 
+            WHERE id = id_document 
+            AND uploaded_by IN (SELECT id FROM users WHERE auth_id = auth.uid())
+        )
+        OR
+        -- Un usuario puede eliminar su propio acceso
+        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())
+    );
+
+-- 5. Política especial para que los administradores tengan acceso completo
+CREATE POLICY admin_documents_policy ON documents
+    USING (
+        EXISTS (
+            SELECT 1 FROM users 
+            WHERE auth_id = auth.uid() 
+            AND is_admin = true
+        )
+    );
+
+CREATE POLICY admin_acceso_policy ON acceso_documentos_usuario
+    USING (
+        EXISTS (
+            SELECT 1 FROM users 
+            WHERE auth_id = auth.uid() 
+            AND is_admin = true
+        )
+    );
+
+    -- Listar todas las políticas en la tabla documents
+SELECT * FROM pg_policies WHERE tablename = 'documents';
+
+-- Listar todas las políticas en la tabla acceso_documentos_usuario
+SELECT * FROM pg_policies WHERE tablename = 'acceso_documentos_usuario';
+
+-- SOLUCIÓN COMPLETA EN UN SOLO PASO
+
+-- 1. Desactivar RLS para la tabla documents
+ALTER TABLE documents DISABLE ROW LEVEL SECURITY;
+
+-- 3. Crear una única política simple que funcione
+CREATE POLICY documents_allow_all ON documents
+    USING (true);
+
+-- 4. Reactivar RLS para la tabla documents
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+-- 5. Confirmar que se aplicaron los cambios
+SELECT tablename, policyname 
+FROM pg_policies 
+WHERE tablename = 'documents';
+
+ALTER TABLE documents ADD COLUMN file_url VARCHAR(255);
+
+-- 1. Política para permitir subidas a usuarios autenticados
+CREATE POLICY "Allow authenticated users to upload"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (bucket_id = 'documents');
+
+-- En Supabase SQL Editor
+SELECT id, title, chromadb_id, status 
+FROM documents 
+WHERE chromadb_id IS NOT NULL AND status = 'completed'
+LIMIT 5;
+-- 2. Política para permitir lectura pública
+CREATE POLICY "Allow public read access"
+ON storage.objects
+FOR SELECT
+TO public
+USING (bucket_id = 'documents');
+
+-- 3. Política para permitir acceso completo al rol de servicio
+CREATE POLICY "Allow service role full access"
+ON storage.objects
+FOR ALL
+TO service_role
+USING (bucket_id = 'documents');
+
+-- Verificar si las políticas existen
+SELECT 
+    policyname, 
+    tablename, 
+    permissive, 
+    roles,
+    cmd
+FROM pg_policies 
+WHERE tablename = 'objects' 
+AND schemaname = 'storage';
+
+SELECT * FROM storage.buckets WHERE name = 'documents';
+
+ALTER TABLE documents
+ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending',
+ADD COLUMN IF NOT EXISTS status_message TEXT,
+ADD COLUMN IF NOT EXISTS file_size BIGINT,
+ADD COLUMN IF NOT EXISTS original_filename VARCHAR(255);
+
+
+SELECT * FROM acceso_documentos_usuario 
+WHERE id_document = 34 AND id_user = 10;
+
+SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual 
+FROM pg_policies 
+WHERE tablename = 'acceso_documentos_usuario';
+
+ALTER TABLE documents ADD COLUMN content TEXT;
+
+CREATE POLICY "Users can create their own chats" ON chats
+FOR INSERT 
+TO authenticated
+WITH CHECK (id_user IN (
+    SELECT id 
+    FROM users 
+    WHERE auth_id = auth.uid()
+));
+
+CREATE TABLE IF NOT EXISTS messages_2025_05 PARTITION OF messages
+FOR VALUES FROM ('2025-05-01') TO ('2025-06-01');
+
+DELETE FROM acceso_documentos_usuario
+WHERE id_document NOT IN (SELECT id FROM documents);
+
+-- Eliminar registros que referencian usuarios inexistentes
+DELETE FROM acceso_documentos_usuario
+WHERE id_user NOT IN (SELECT id FROM users);
+
+
+-- 1. Agregar columna ID auto-incremental
+ALTER TABLE acceso_documentos_usuario 
+ADD COLUMN IF NOT EXISTS id SERIAL;
+
+-- 2. Cambiar la primary key
+ALTER TABLE acceso_documentos_usuario 
+DROP CONSTRAINT IF EXISTS acceso_documentos_usuario_pkey;
+
+ALTER TABLE acceso_documentos_usuario 
+ADD PRIMARY KEY (id);
+
+-- 3. Agregar constraint único
+ALTER TABLE acceso_documentos_usuario 
+ADD CONSTRAINT unique_document_user UNIQUE (id_document, id_user);
+
+-- 4. Renombrar columna si existe
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns 
+               WHERE table_name = 'acceso_documentos_usuario' 
+               AND column_name = 'linked_time') THEN
+        ALTER TABLE acceso_documentos_usuario 
+        RENAME COLUMN linked_time TO created_at;
+    END IF;
+END $$;
+
+-- 5. Ahora sí podemos agregar las foreign keys
+ALTER TABLE acceso_documentos_usuario 
+ADD CONSTRAINT fk_document FOREIGN KEY (id_document) 
+REFERENCES documents(id) ON DELETE CASCADE;
+
+ALTER TABLE acceso_documentos_usuario 
+ADD CONSTRAINT fk_user FOREIGN KEY (id_user) 
+REFERENCES users(id) ON DELETE CASCADE;
+
+-- 6. Crear índices
+CREATE INDEX IF NOT EXISTS idx_acceso_documentos_usuario_document 
+ON acceso_documentos_usuario(id_document);
+
+CREATE INDEX IF NOT EXISTS idx_acceso_documentos_usuario_user 
+ON acceso_documentos_usuario(id_user);
+
+-- 7. Verificar estructura final
+SELECT 
+    column_name, 
+    data_type, 
+    column_default
+FROM information_schema.columns 
+WHERE table_name = 'acceso_documentos_usuario'
+ORDER BY ordinal_position;
+
+
+-- PRIMERO: Agregar las columnas
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP WITH TIME ZONE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMP WITH TIME ZONE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP WITH TIME ZONE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token) WHERE reset_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token) WHERE verification_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
+
+ALTER TABLE users DISABLE TRIGGER encrypt_email_on_insert_update;
+
+INSERT INTO users (
+    username,
+    email,
+    password_hash,
+    is_admin,
+    auth_id,
+    created_at,
+    updated_at
+) VALUES (
+    'heily',
+    'heily1857@gmail.com',
+    '$2b$12$KIXxPfGGPnCDISiSZ1gVdOV3UYSdGh3vCQlYwTt9DzRPPWyF9xKGm',
+    false,
+    gen_random_uuid(),  -- Genera UUID automáticamente
+    NOW(),
+    NOW()
+);
+
+SELECT id, username, email, is_admin, auth_id 
+FROM users 
+WHERE email = 'heily1857@gmail.com';
+
+
+
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(token_hash)
+);
+
+-- Crear índices para mejorar el rendimiento
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+
+-- Función para limpiar tokens expirados automáticamente
+CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
+RETURNS void AS $$
+BEGIN
+    DELETE FROM password_reset_tokens WHERE expires_at < NOW();
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='refresh_token'
+    ) THEN
+        ALTER TABLE users ADD COLUMN refresh_token TEXT;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='reset_token'
+    ) THEN
+        ALTER TABLE users ADD COLUMN reset_token TEXT;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='reset_token_expires'
+    ) THEN
+        ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='email_verified'
+    ) THEN
+        ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='verification_token'
+    ) THEN
+        ALTER TABLE users ADD COLUMN verification_token TEXT;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='verification_token_expires'
+    ) THEN
+        ALTER TABLE users ADD COLUMN verification_token_expires TIMESTAMP;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='last_login'
+    ) THEN
+        ALTER TABLE users ADD COLUMN last_login TIMESTAMP;
+    END IF;
+END $$;
+
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='users' AND column_name='avatar_url'
+    ) THEN
+        ALTER TABLE users ADD COLUMN avatar_url TEXT;
+    END IF;
+END $$;
+
+-- 2. Crear índices para mejorar el rendimiento
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);
+CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token);
+CREATE INDEX IF NOT EXISTS idx_users_auth_id ON users(auth_id);
+CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON documents(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_messages_id_chat ON messages(id_chat);
+CREATE INDEX IF NOT EXISTS idx_chats_id_user ON chats(id_user);
+
+-- 3. Verificar estructura de la tabla users
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'users'
+ORDER BY ordinal_position;
+
+
+
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'users' AND table_schema = 'public';
+
+
+
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_schema = 'public' 
+  AND table_name = 'users'
+ORDER BY ordinal_position;
+
+
+-----------------------------------------------
+
+-- 4. Política para SELECT (lectura) - CORREGIDA
+CREATE POLICY "Usuarios pueden ver sus propios accesos" 
+ON acceso_documentos_usuario FOR SELECT USING (
+    auth.uid() = (SELECT auth_id FROM users WHERE id = id_user)
+    OR 
+    auth.uid() = (SELECT auth_id FROM users u JOIN documents d ON u.id = d.uploaded_by WHERE d.id = id_document)
+);
+
+-- 5. Política para INSERT (compartir) - CORREGIDA
+CREATE POLICY "Propietarios pueden compartir documentos" 
+ON acceso_documentos_usuario FOR INSERT WITH CHECK (
+    EXISTS (
+        SELECT 1 FROM documents d 
+        JOIN users u ON d.uploaded_by = u.id 
+        WHERE d.id = id_document 
+        AND u.auth_id = auth.uid()
+    )
+);
+
+-- 6. Política para DELETE (revocar acceso) - CORREGIDA
+CREATE POLICY "Propietarios pueden revocar acceso" 
+ON acceso_documentos_usuario FOR DELETE USING (
+    EXISTS (
+        SELECT 1 FROM documents d 
+        JOIN users u ON d.uploaded_by = u.id 
+        WHERE d.id = id_document 
+        AND u.auth_id = auth.uid()
+    )
+);
+-- 7. Índices para mejorar rendimiento
+CREATE INDEX IF NOT EXISTS idx_acceso_doc_user ON acceso_documentos_usuario(id_user);
+CREATE INDEX IF NOT EXISTS idx_acceso_doc_document ON acceso_documentos_usuario(id_document);
+
+-- 8. Vista para documentos compartidos (opcional)
+CREATE OR REPLACE VIEW v_shared_documents AS
+SELECT 
+    d.*,
+    u.username as owner_username,
+    a.linked_time as shared_at, 
+    a.id_user as shared_with_user_id
+FROM documents d
+JOIN users u ON d.uploaded_by = u.id
+JOIN acceso_documentos_usuario a ON d.id = a.id_document;

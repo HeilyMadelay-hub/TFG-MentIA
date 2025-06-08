@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.example.frontend_flutter.app-mergeDebugResources-39:/values-v24/values-v24.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\heily\\.gradle\\caches\\8.10.2\\transforms\\f11241612cb45f9ee9607d863f72a6f8\\transformed\\appcompat-1.1.0\\res\\values-v24\\values-v24.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,212",
+                        "endColumns": "156,134",
+                        "endOffsets": "207,342"
+                    }
+                }
+            ]
+        }
+    ]
+}

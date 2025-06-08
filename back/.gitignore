@@ -1,0 +1,49 @@
+# Archivos de entorno
+.env
+.env.local
+.env.*.local
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Entornos virtuales
+venv/
+ENV/
+.venv/
+
+# IDEs y editores
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs y bases de datos
+*.log
+*.sqlite
+
+
+#El env al ponerlo en gitignore:
+#Hace que nuestras credenciales están seguras
+#No se suban archivos innecesarios al repositorio
+#Se mantenga el repositorio limpio y profesional

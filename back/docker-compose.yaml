@@ -1,0 +1,37 @@
+services:
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: chromadb
+    restart: unless-stopped
+    ports:
+      - 8050:8000
+    volumes:
+      - ./chroma-data:/chroma/chroma
+    environment:
+      - ALLOW_RESET=true
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_PORT=8000
+      - CHROMA_TELEMETRY_ENABLED=false
+      - CHROMA_SERVER_GRPC_WORKERS=6
+      - CHROMA_SERVER_WORKERS=3
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - LANGCHAIN_TRACING_V2=false
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+          cpus: "3.0"
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
