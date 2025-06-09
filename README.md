@@ -458,8 +458,8 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 
 ## 👥 Equipo
 
-- **Desarrollador Principal**: [Tu Nombre]
-- **Contacto**: [tu-email@ejemplo.com]
+- **Desarrollador Principal**: [Heily Madelay]
+- **Contacto**: [heilymadelayajtan@icloud.com]
 
 ---
 
