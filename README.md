@@ -413,7 +413,7 @@ flutter test
 <details>
 <summary>🔐 Pantalla de Login</summary>
 <br>
-<img src="docs/screenshots/login.png" alt="Login Screen" width="600">
+<img src="assets/login.png" alt="Login Screen" width="600">
 <p><em>Interfaz de inicio de sesión con diseño moderno y responsivo</em></p>
 </details>
 
