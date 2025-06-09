@@ -349,7 +349,7 @@ flutter test
 
 - Eliminación automática de documentos en la vista del usuario cuando el admin los elimine
 - Implementación con WebSockets para actualizaciones instantáneas
-- Notificaciones push de cambios en documentos
+- Notificaciones push de cambios en documentos o de nuevos documentos.
 
 **2. Endpoints Especializados**
 
@@ -397,8 +397,6 @@ flutter test
 - Sistema de recuperación que no requiere configuración .env
 - Servicio de email cloud integrado (SendGrid/Mailgun)
 - Generación de links mágicos con tokens temporales
-- En desarrollo: visualización de link en consola
-- En producción: envío automático sin configuración adicional
 
 ## 🤝 Contribuir
 
