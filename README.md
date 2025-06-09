@@ -359,21 +359,18 @@ flutter test
 
 3. Panel de Actividad Mejorado
 
-  Dashboard Usuario:
+   Dashboard Usuario:
 
 - Timeline visual de documentos recientes
 - Última actividad con fecha/hora exacta
 - Historial de acciones (visto, editado, descargado)
 
-
-  Panel Admin:
+   Panel Admin:
 
 - Vista general de actividad en tiempo real
 - Fecha de registro de usuarios con contador de días
 - Actividad reciente de chats con métricas
 - Dashboard con estadísticas: usuarios activos, documentos vistos, chats activos
-
-
 
 4. Mejoras de UI/UX
 
