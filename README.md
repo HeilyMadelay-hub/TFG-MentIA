@@ -365,7 +365,7 @@ flutter test
 - Última actividad con fecha/hora exacta
 - Historial de acciones (visto, editado, descargado)
 
-   _Panel Admin:_
+ _Panel Admin:_
 
 - Vista general de actividad en tiempo real
 - Fecha de registro de usuarios con contador de días
