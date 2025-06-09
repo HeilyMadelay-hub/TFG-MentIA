@@ -342,7 +342,66 @@ flutter test
 - **CORS Configurado**: Protección contra peticiones no autorizadas
 - **Variables de Entorno**: El archivo `.env` está en `.gitignore` para proteger credenciales
 
-> ⚠️ **IMPORTANTE**: Nunca subas el archivo `.env` a GitHub. Crea un archivo `.env.example` con valores de ejemplo para referencia.
+### 🚀 Mejoras Futuras
+## 📋 Funcionalidades Planificadas
+
+1. Sincronización en Tiempo Real
+
+- Eliminación automática de documentos en la vista del usuario cuando el admin los elimine
+- Implementación con WebSockets para actualizaciones instantáneas
+- Notificaciones push de cambios en documentos
+
+2. Endpoints Especializados
+
+- Admin: /api/admin/activity/* - Actividad global y por usuario
+- Usuario: /api/user/activity/* - Actividad personalizada
+- Separación clara entre datos administrativos y de usuario final
+
+3. Panel de Actividad Mejorado
+
+  Dashboard Usuario:
+
+- Timeline visual de documentos recientes
+- Última actividad con fecha/hora exacta
+- Historial de acciones (visto, editado, descargado)
+
+
+  Panel Admin:
+
+- Vista general de actividad en tiempo real
+- Fecha de registro de usuarios con contador de días
+- Actividad reciente de chats con métricas
+- Dashboard con estadísticas: usuarios activos, documentos vistos, chats activos
+
+
+
+4. Mejoras de UI/UX
+
+- Cards modernos con iconos y animaciones
+- Filtros rápidos por tipo de actividad
+- Vista Kanban para gestión de usuarios
+- Gráficos interactivos de métricas
+
+5. Sistema de Tracking
+
+- Base de datos optimizada para registro de actividades
+- Triggers automáticos para cada acción
+- Reportes detallados de uso por usuario/documento
+
+6. Sistema de Registro de Usuarios
+
+- Pantalla completa de registro con validación en tiempo real
+- Formulario con campos: nombre, email, contraseña con indicador de fortaleza
+- Captcha integrado y opción de registro con Google/GitHub
+- Email de bienvenida automático post-registro
+
+7. Recuperación de Contraseña Sin SMTP
+
+- Sistema de recuperación que no requiere configuración .env
+- Servicio de email cloud integrado (SendGrid/Mailgun)
+- Generación de links mágicos con tokens temporales
+- En desarrollo: visualización de link en consola
+- En producción: envío automático sin configuración adicional
 
 ## 🤝 Contribuir
 
