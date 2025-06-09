@@ -427,28 +427,31 @@ flutter test
 <details>
 <summary>📄 Gestión de Documentos</summary>
 <br>
-<img src="docs/screenshots/documents.png" alt="Documents Management" width="600">
+<img src="assets/gestiondocs.png" alt="Documents Management" width="600">
 <p><em>Vista de documentos con opciones de filtrado y búsqueda</em></p>
 </details>
 
 <details>
 <summary>💬 Chat con IA</summary>
 <br>
-<img src="docs/screenshots/chat.png" alt="AI Chat" width="600">
+<img src="assets/chatconia.png" alt="AI Chat" width="600">
 <p><em>Interfaz de chat conversacional con respuestas basadas en documentos</em></p>
 </details>
 
 <details>
 <summary>👥 Compartir Documentos</summary>
 <br>
-<img src="docs/screenshots/share.png" alt="Share Documents" width="600">
+<img src="assets/compartirdoc.png" alt="Share Documents" width="600">
 <p><em>Sistema de permisos para compartir documentos con usuarios específicos</em></p>
 </details>
 
 <details>
 <summary>🎛️ Panel Administrativo</summary>
 <br>
-<img src="docs/screenshots/admin.png" alt="Admin Panel" width="600">
+<img src="assets/paneladmin1.png" alt="Admin Panel" width="600">
+<img src="assets/paneladmin2.png" alt="Admin Panel" width="600">
+<img src="assets/paneladmin3.png" alt="Admin Panel" width="600">
+<img src="assets/PANELADMIN4.png" alt="Admin Panel" width="600">
 <p><em>Panel completo para administradores con gestión de usuarios y sistema</em></p>
 </details>
 
