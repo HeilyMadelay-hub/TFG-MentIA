@@ -420,14 +420,15 @@ flutter test
 <details>
 <summary>📊 Dashboard Principal</summary>
 <br>
-<img src="docs/screenshots/dashboard.png" alt="Dashboard" width="600">
+<img src="assets/dashboardprincipalpt1.png" alt="Dashboard" width="600">
+<img src="assets/dashboardprincipalpt2.png" alt="Dashboard" width="600">
 <p><em>Panel principal con estadísticas y accesos rápidos</em></p>
 </details>
 
 <details>
 <summary>📄 Gestión de Documentos</summary>
 <br>
-<img src="assets/gestiondocs.png" alt="Documents Management" width="600">
+<img src="assets/gestiondoc.png" alt="Documents Management" width="600">
 <p><em>Vista de documentos con opciones de filtrado y búsqueda</em></p>
 </details>
 
