@@ -1,4 +1,4 @@
-# 📚 DocuMente - Asistente de Documentos con IA
+# 📚 MentIA - Asistente de Documentos con IA
 
 ## 🎬 Demo del Proyecto
 
