@@ -1,12 +1,16 @@
 """
-Endpoint de health check para monitoreo del sistema
+Endpoint de health check para monitoreo del sistema - VERSION MIGRADA
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from typing import Dict, Any
 import logging
 from datetime import datetime
 from src.config.database import get_supabase_client
 from src.utils.chromadb_connector import ChromaDBConnector
+from src.core.exceptions import (
+    DatabaseException,
+    ExternalServiceException
+)
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)
@@ -43,7 +47,8 @@ async def health_check():
     try:
         chromadb = ChromaDBConnector()
         # Verificar que se puede acceder a las colecciones
-        collections = chromadb.client.list_collections()
+        client = chromadb.get_client()
+        collections = client.list_collections()
         health_status["services"]["chromadb"] = {
             "status": "healthy",
             "message": f"Vector DB operational, {len(collections)} collections"
@@ -57,7 +62,12 @@ async def health_check():
     
     # Determinar código de estado HTTP
     if health_status["status"] == "unhealthy":
-        raise HTTPException(status_code=503, detail=health_status)
+        # En lugar de HTTPException, lanzar una excepción personalizada
+        # que incluya el status en el detail
+        raise ExternalServiceException(
+            "Sistema no saludable",
+            detail=health_status
+        )
     
     return health_status
 
@@ -76,8 +86,9 @@ async def readiness_check():
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=503,
+        # Usar ExternalServiceException para indicar que el servicio no está listo
+        raise ExternalServiceException(
+            "Servicio no está listo",
             detail={
                 "status": "not_ready",
                 "error": str(e),

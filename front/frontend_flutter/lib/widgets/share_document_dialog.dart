@@ -84,21 +84,94 @@ class _ShareDocumentDialogState extends State<ShareDocumentDialog> {
     });
 
     try {
-      await _documentService.shareDocument(
+      final response = await _documentService.shareDocument(
         documentId: widget.document.id,
         userIds: userIds,
       );
 
       if (mounted) {
-        // Mostrar mensaje de éxito
+        // Interpretar la respuesta del backend
+        final bool success = response['success'] ?? false;
+        final String message = response['message'] ?? '';
+        final List alreadyShared = response['already_shared'] ?? [];
+        final Map<String, dynamic> summary = response['share_summary'] ?? {};
+        
+        // Determinar el color y el ícono según el resultado
+        Color snackBarColor;
+        String displayMessage;
+        
+        if (summary['new_shares'] > 0) {
+          // Se compartieron nuevos documentos
+          snackBarColor = Colors.green;
+          displayMessage = message;
+        } else if (summary['already_shared'] > 0 && summary['new_shares'] == 0) {
+          // Todos ya tenían acceso
+          snackBarColor = Colors.orange;
+          displayMessage = message;
+        } else {
+          // Error o ningún cambio
+          snackBarColor = Colors.red;
+          displayMessage = 'No se pudo compartir el documento';
+        }
+        
+        // Mostrar mensaje apropiado
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Documento compartido exitosamente'),
-            backgroundColor: Colors.green,
+            content: Text(displayMessage),
+            backgroundColor: snackBarColor,
+            duration: const Duration(seconds: 4),
           ),
         );
-
-        Navigator.of(context).pop();
+        
+        // Si hay usuarios que ya tenían acceso, mostrar detalles
+        if (alreadyShared.isNotEmpty && summary['new_shares'] == 0) {
+          // Mostrar diálogo informativo
+          Navigator.of(context).pop(); // Cerrar diálogo de compartir
+          
+          showDialog(
+            context: context,
+            builder: (BuildContext context) {
+              return AlertDialog(
+                title: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    const Text('Información'),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Los siguientes usuarios ya tenían acceso:'),
+                    const SizedBox(height: 12),
+                    ...alreadyShared.map((user) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.person, size: 20, color: Colors.grey),
+                          const SizedBox(width: 8),
+                          Text('${user['username']} (ID: ${user['id']})',
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    )).toList(),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    child: const Text('Entendido'),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              );
+            },
+          );
+        } else {
+          Navigator.of(context).pop();
+        }
+        
         widget.onShared?.call();
       }
     } catch (e) {

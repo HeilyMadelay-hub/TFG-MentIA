@@ -10,7 +10,7 @@ import '../services/auth_service.dart';
 class DashboardData {
   final Map<String, int> statistics;
   final List<dynamic> recentDocuments;
-  final List<ChatModel> recentChats;
+  final List<Chat> recentChats;
   final DateTime lastUpdated;
 
   DashboardData({
@@ -48,10 +48,11 @@ class DashboardProvider extends ChangeNotifier {
     'total_users': 0,
     'total_documents': 0,
     'active_chats': 0,
+    'shared_documents': 0,
   };
 
   List<dynamic> get recentDocuments => _dashboardData?.recentDocuments ?? [];
-  List<ChatModel> get recentChats => _dashboardData?.recentChats ?? [];
+  List<Chat> get recentChats => _dashboardData?.recentChats ?? [];
 
   // Inicializar y precargar datos al hacer login
   Future<void> initializeOnLogin() async {
@@ -115,6 +116,7 @@ class DashboardProvider extends ChangeNotifier {
           'total_users': 0,
           'total_documents': 0,
           'active_chats': 0,
+          'shared_documents': 0,
         };
         
         if (data['statistics'] != null && data['statistics'] is Map) {
@@ -122,6 +124,7 @@ class DashboardProvider extends ChangeNotifier {
           statistics['total_users'] = data['statistics']['total_users'] ?? 0;
           statistics['total_documents'] = data['statistics']['total_documents'] ?? 0;
           statistics['active_chats'] = data['statistics']['active_chats'] ?? 0;
+          statistics['shared_documents'] = data['statistics']['shared_documents'] ?? 0;
         } else {
           print('⚠️ No se encontraron estadísticas en la respuesta');
         }
@@ -134,7 +137,7 @@ class DashboardProvider extends ChangeNotifier {
           recentDocs = data['recent_documents'];
           print('📄 Documentos recientes: ${recentDocs.length}');
         }
-        List<ChatModel> parsedChats = [];
+        List<Chat> parsedChats = [];
         if (data['recent_chats'] != null && data['recent_chats'] is List) {
           for (var chatData in data['recent_chats']) {
             try {
@@ -143,20 +146,46 @@ class DashboardProvider extends ChangeNotifier {
                 continue;
               }
               
-              // Asegurar que los campos necesarios existen
-              chatData['name_chat'] = chatData['title'] ?? chatData['name_chat'] ?? 'Chat sin título';
-              chatData['id_user'] = chatData['id_user'] ?? AuthService().currentUser?.id;
+              // Log para debug
+              print('🔍 Chat data recibido: $chatData');
               
-              // Si no tiene updated_at, usar created_at
-              if (chatData['updated_at'] == null && chatData['created_at'] != null) {
-                chatData['updated_at'] = chatData['created_at'];
+              // Asegurar que los campos necesarios existen
+              // Mapear campos del backend al modelo Chat
+              if (chatData['name_chat'] != null) {
+                chatData['title'] = chatData['name_chat'];
+              } else if (chatData['name'] != null) {
+                chatData['title'] = chatData['name'];
               }
               
-              parsedChats.add(ChatModel.fromJson(chatData));
+              // Verificar que el título no esté vacío
+              if (chatData['title'] == null || chatData['title'].toString().trim().isEmpty) {
+                chatData['title'] = 'Chat sin título';
+              }
+              
+              // Asegurar que user_id sea string
+              var userId = chatData['user_id'] ?? chatData['id_user'] ?? AuthService().currentUser?.id;
+              chatData['user_id'] = userId?.toString() ?? '';
+              
+              // Asegurar que last_message_at existe
+              if (chatData['last_message_at'] == null) {
+                chatData['last_message_at'] = chatData['updated_at'] ?? chatData['created_at'] ?? DateTime.now().toIso8601String();
+              }
+              
+              print('📝 Chat parseado - ID: ${chatData['id']}, Título: ${chatData['title']}');
+              
+              final chat = Chat.fromJson(chatData);
+              parsedChats.add(chat);
+              print('✅ Chat añadido correctamente - ID: ${chat.id}, Título: ${chat.title}');
             } catch (e) {
-              print('Error parseando chat: $e');
+              print('❌ Error parseando chat: $e');
+              print('   Datos del chat: $chatData');
             }
           }
+        }
+        
+        print('🔍 Total chats parseados: ${parsedChats.length}');
+        for (var chat in parsedChats) {
+          print('   - Chat ID: ${chat.id}, Título: "${chat.title}"');
         }
 
         _dashboardData = DashboardData(
@@ -178,7 +207,24 @@ class DashboardProvider extends ChangeNotifier {
       }
     } catch (e) {
       print('❌ Error cargando dashboard: $e');
-      _error = e.toString();
+      
+      // No mostrar errores técnicos al usuario
+      if (e.toString().contains('No hay token de autenticación') ||
+          e.toString().contains('401') ||
+          e.toString().contains('Unauthorized')) {
+        // Sesión expirada - no guardar error, dejar que el sistema maneje la reautenticación
+        _error = null;
+        
+        // Si no estamos mostrando loading, no hacer nada más
+        if (!showLoading) {
+          return;
+        }
+      } else if (e.toString().contains('SocketException') || 
+                 e.toString().contains('TimeoutException')) {
+        _error = 'Error de conexión';
+      } else {
+        _error = 'Error al cargar datos';
+      }
       
       // Si no hay datos previos, inicializar con valores vacíos
       if (_dashboardData == null) {
@@ -187,6 +233,7 @@ class DashboardProvider extends ChangeNotifier {
             'total_users': 0,
             'total_documents': 0,
             'active_chats': 0,
+            'shared_documents': 0,
           },
           recentDocuments: [],
           recentChats: [],

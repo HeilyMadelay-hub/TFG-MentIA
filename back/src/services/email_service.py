@@ -25,7 +25,7 @@ class EmailService:
         self.smtp_user = os.getenv("SMTP_USER", "")
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.from_email = os.getenv("FROM_EMAIL", "noreply@chatbot.com")
-        self.app_name = "ChatBot TFG"
+        self.app_name = "DocuMente"
         self.app_url = os.getenv("FRONTEND_URL", "http://localhost:53793")
         
         # Log de configuración para debug
@@ -90,12 +90,13 @@ class EmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background-color: #4A90E2; color: white; padding: 20px; text-align: center; }}
-                .content {{ background-color: #f9f9f9; padding: 20px; margin-top: 20px; }}
-                .button {{ display: inline-block; padding: 12px 30px; background-color: #4CAF50 !important; 
-                          color: white !important; text-decoration: none; border-radius: 5px; margin: 20px 0; 
-                          font-weight: bold !important; font-size: 16px !important; text-transform: uppercase; }}
+                .header {{ background-color: #4A90E2; color: white; padding: 30px; text-align: center; }}
+                .content {{ background-color: #f9f9f9; padding: 30px; margin-top: 0; }}
+                .button {{ display: inline-block; padding: 15px 40px; background-color: #4A90E2 !important; 
+                          color: white !important; text-decoration: none !important; border-radius: 5px; margin: 20px 0; 
+                          font-weight: bold !important; font-size: 16px !important; text-transform: uppercase !important; }}
                 .footer {{ text-align: center; margin-top: 20px; font-size: 12px; color: #666; }}
+                a.button:hover {{ background-color: #357ABD !important; }}
             </style>
         </head>
         <body>
@@ -109,7 +110,7 @@ class EmailService:
                     <p>Si no solicitaste este cambio, puedes ignorar este correo.</p>
                     <p>Para restablecer tu contraseña, haz clic en el siguiente botón:</p>
                     <center>
-                        <a href="{reset_url}" class="button">Restablecer Contraseña</a>
+                        <a href="{reset_url}" class="button" style="color: white !important; text-decoration: none !important;">RESTABLECER CONTRASEÑA</a>
                     </center>
                     <p><strong>Este enlace expirará en 1 hora.</strong></p>
                 </div>
@@ -153,11 +154,13 @@ class EmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background-color: #4A90E2; color: white; padding: 20px; text-align: center; }}
-                .content {{ background-color: #f9f9f9; padding: 20px; margin-top: 20px; }}
-                .button {{ display: inline-block; padding: 12px 30px; background-color: #4CAF50; 
-                          color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }}
+                .header {{ background-color: #4A90E2; color: white; padding: 30px; text-align: center; }}
+                .content {{ background-color: #f9f9f9; padding: 30px; margin-top: 0; }}
+                .button {{ display: inline-block; padding: 15px 40px; background-color: #4A90E2 !important; 
+                          color: white !important; text-decoration: none !important; border-radius: 5px; margin: 20px 0; 
+                          font-weight: bold !important; font-size: 16px !important; text-transform: uppercase !important; }}
                 .footer {{ text-align: center; margin-top: 20px; font-size: 12px; color: #666; }}
+                a.button:hover {{ background-color: #357ABD !important; }}
             </style>
         </head>
         <body>
@@ -170,11 +173,9 @@ class EmailService:
                     <p>Gracias por registrarte en {self.app_name}.</p>
                     <p>Para completar tu registro, por favor verifica tu dirección de email:</p>
                     <center>
-                        <a href="{verify_url}" class="button">Verificar Email</a>
+                        <a href="{verify_url}" class="button" style="color: white !important; text-decoration: none !important;">VERIFICAR EMAIL</a>
                     </center>
-                    <p>O copia y pega este enlace en tu navegador:</p>
-                    <p style="word-break: break-all;">{verify_url}</p>
-                    <p><strong>Este email expirará en 24 horas.</strong></p>
+                    <p><strong>Este enlace expirará en 24 horas.</strong></p>
                 </div>
                 <div class="footer">
                     <p>© 2024 {self.app_name}. Todos los derechos reservados.</p>
@@ -191,8 +192,7 @@ class EmailService:
         
         Gracias por registrarte en {self.app_name}.
         
-        Para completar tu registro, por favor verifica tu dirección de email visitando:
-        {verify_url}
+        Para completar tu registro, por favor verifica tu dirección de email haciendo clic en el botón del email.
         
         Este enlace expirará en 24 horas.
         
@@ -347,6 +347,97 @@ class EmailService:
         """
         
         return self.send_email(to_email, subject, html_content, text_content)
+    
+    def send_email_change_notification(self, old_email: str, new_email: str, username: str, confirmation_token: str) -> bool:
+        """
+        Envía email de notificación de cambio de email al correo ANTERIOR
+        """
+        confirmation_url = f"{self.app_url}/api/users/verify-email-change?token={confirmation_token}"
+        
+        subject = f"{self.app_name} - Solicitud de Cambio de Email"
+        
+        # Leer el template HTML
+        import os
+        from pathlib import Path
+        
+        template_path = Path(__file__).parent.parent / "templates" / "emails" / "email_change_notification.html"
+        
+        try:
+            with open(template_path, 'r', encoding='utf-8') as f:
+                html_template = f.read()
+            
+            # Reemplazar las variables en el template
+            html_content = html_template.replace('{{username}}', username)
+            html_content = html_content.replace('{{old_email}}', old_email)
+            html_content = html_content.replace('{{new_email}}', new_email)
+            html_content = html_content.replace('{{confirmation_link}}', confirmation_url)
+            
+        except FileNotFoundError:
+            # Fallback a un template simple si no se encuentra el archivo
+            logger.warning(f"Template HTML no encontrado en {template_path}, usando fallback")
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                    .header {{ background-color: #6B4CE6; color: white; padding: 30px; text-align: center; }}
+                    .content {{ background-color: #f9f9f9; padding: 30px; margin-top: 0; }}
+                    .button {{ display: inline-block; padding: 15px 40px; background-color: #6B4CE6 !important; 
+                              color: white !important; text-decoration: none !important; border-radius: 5px; margin: 20px 0; 
+                              font-weight: bold !important; font-size: 16px !important; text-transform: uppercase !important; }}
+                    .footer {{ text-align: center; margin-top: 20px; font-size: 12px; color: #666; }}
+                    .alert {{ background-color: #FFF3CD; padding: 15px; border-left: 4px solid #FFC107; margin: 20px 0; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>🔄 Cambio de Email Detectado</h1>
+                    </div>
+                    <div class="content">
+                        <h2>Hola {username},</h2>
+                        <div class="alert">
+                            <p><strong>⚠️ Se ha solicitado cambiar tu email de:</strong></p>
+                            <p>{old_email} → {new_email}</p>
+                        </div>
+                        <p>Si realizaste esta solicitud, confirma el cambio haciendo clic en el siguiente botón:</p>
+                        <center>
+                            <a href="{confirmation_url}" class="button" style="color: white !important; text-decoration: none !important;">✅ SÍ, FUI YO - CONFIRMAR CAMBIO</a>
+                        </center>
+                        <p><strong>Este enlace expirará en 24 horas.</strong></p>
+                        <p><small>Si no fuiste tú, ignora este email y tu cuenta permanecerá sin cambios.</small></p>
+                    </div>
+                    <div class="footer">
+                        <p>© 2024 {self.app_name}. Todos los derechos reservados.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+        
+        text_content = f"""
+        Cambio de Email Detectado
+        
+        Hola {username},
+        
+        Se ha solicitado cambiar tu email de:
+        {old_email} → {new_email}
+        
+        Si realizaste esta solicitud, confirma el cambio visitando:
+        {confirmation_url}
+        
+        Este enlace expirará en 24 horas.
+        
+        Si no fuiste tú, ignora este email y tu cuenta permanecerá sin cambios.
+        
+        Saludos,
+        El equipo de {self.app_name}
+        """
+        
+        # IMPORTANTE: Enviar al email ANTERIOR
+        return self.send_email(old_email, subject, html_content, text_content)
 
 # Instancia global del servicio
 email_service = EmailService()

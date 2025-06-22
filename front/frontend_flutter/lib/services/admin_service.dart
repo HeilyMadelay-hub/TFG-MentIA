@@ -1,130 +1,145 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'api_client.dart';
 import '../config/api_config.dart';
 import '../models/document.dart';
 import '../models/chat.dart';
 import '../models/user.dart';
 
 class AdminService {
-  static const String _tokenKey = 'auth_token';
-
-  // Obtener el token de autenticación
-  Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
-  }
-
-  // Configurar headers con autenticación
-  Future<Map<String, String>> _getHeaders() async {
-    final token = await _getToken();
-    if (token == null) {
-      throw Exception('No authentication token found');
-    }
-
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-    };
-  }
+  final ApiClient _apiClient = apiClient;
 
   // Obtener TODOS los documentos del sistema (para administradores)
   Future<List<Document>> getAllDocuments({
     int skip = 0,
-    int limit = 500, // Límite máximo permitido por el backend
+    int limit = 100,
+    String sortBy = 'created_at',
+    String order = 'desc',
+    int? userFilter,
+    String? contentTypeFilter,
   }) async {
     try {
       debugPrint('🔄 [ADMIN] Cargando TODOS los documentos del sistema...');
-      final headers = await _getHeaders();
       
-      // Usar el endpoint admin correcto que sí existe en el backend
-      String url = '${ApiConfig.baseUrl}/documents/admin/all?skip=$skip&limit=$limit';
+      // ✅ NUEVA URL CORRECTA: /admin/documents
+      final url = ApiConfig.adminDocumentsWithFilters(
+        skip: skip,
+        limit: limit,
+        sortBy: sortBy,
+        order: order,
+        userFilter: userFilter,
+        contentTypeFilter: contentTypeFilter,
+      );
       
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(const Duration(seconds: 10));
+      debugPrint('📡 [ADMIN SERVICE] Calling: $url');
+      
+      final response = await _apiClient.get(url);
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        debugPrint('✅ [ADMIN] Documentos totales cargados: ${jsonList.length}');
-        return jsonList.map((json) => Document.fromJson(json)).toList();
-      } else if (response.statusCode == 403) {
-        throw Exception('No tienes permisos de administrador');
-      } else {
-        throw Exception('Failed to load all documents: ${response.statusCode}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      debugPrint('✅ [ADMIN] Documentos totales cargados: ${jsonList.length}');
+      return jsonList.map((json) => Document.fromJson(json)).toList();
     } catch (e) {
       debugPrint('❌ [ADMIN] Error al cargar documentos: $e');
+      if (e is ApiException && e.statusCode == 403) {
+        throw Exception('No tienes permisos de administrador');
+      }
       throw Exception('Error loading all documents: $e');
     }
   }
 
   // Obtener TODOS los chats del sistema (para administradores)
-  Future<List<ChatModel>> getAllChats({
+  Future<List<Chat>> getAllChats({
     int skip = 0,
     int limit = 500, // Límite máximo permitido por el backend
   }) async {
     try {
       debugPrint('🔄 [ADMIN] Cargando TODOS los chats del sistema...');
-      final headers = await _getHeaders();
       
       // Usar el endpoint admin correcto que sí existe en el backend
-      String url = '${ApiConfig.baseUrl}/chats/admin/all?skip=$skip&limit=$limit';
-      
-      debugPrint('🌐 [ADMIN] URL: $url');
-      debugPrint('🔑 [ADMIN] Headers: $headers');
-      
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(const Duration(seconds: 10));
+      final response = await _apiClient.get(
+        '${ApiConfig.baseUrl}/chats/admin/all',
+        queryParams: {
+          'skip': skip.toString(),
+          'limit': limit.toString(),
+        },
+      );
 
       debugPrint('📦 [ADMIN] Response status: ${response.statusCode}');
-      debugPrint('📦 [ADMIN] Response body: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}...');
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        debugPrint('✅ [ADMIN] Chats totales cargados: ${jsonList.length}');
-        return jsonList.map((json) => ChatModel.fromJson(json)).toList();
-      } else if (response.statusCode == 403) {
-        throw Exception('No tienes permisos de administrador');
-      } else {
-        throw Exception('Failed to load all chats: ${response.statusCode} - ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      debugPrint('✅ [ADMIN] Chats totales cargados: ${jsonList.length}');
+      return jsonList.map((json) => Chat.fromJson(json)).toList();
     } catch (e) {
       debugPrint('❌ [ADMIN] Error al cargar chats: $e');
+      if (e is ApiException && e.statusCode == 403) {
+        throw Exception('No tienes permisos de administrador');
+      }
       throw Exception('Error loading all chats: $e');
     }
   }
 
-  // Obtener estadísticas reales del sistema
+  // 🆕 NUEVO MÉTODO: Obtener estadísticas avanzadas de documentos
+  Future<Map<String, dynamic>> getDocumentsStatistics({
+    String timePeriod = 'all',
+    String groupBy = 'user',
+  }) async {
+    try {
+      debugPrint('📈 [ADMIN] Obteniendo estadísticas de documentos...');
+      
+      // ✅ NUEVA URL CORRECTA: /admin/documents/stats
+      final url = ApiConfig.adminDocumentsStatsWithPeriod(
+        timePeriod: timePeriod,
+        groupBy: groupBy,
+      );
+      
+      debugPrint('📈 [ADMIN SERVICE] Getting documents stats: $url');
+      
+      final response = await _apiClient.get(url);
+
+      final data = json.decode(response.body);
+      debugPrint('✅ [ADMIN] Estadísticas de documentos recibidas');
+      return data;
+    } catch (e) {
+      debugPrint('❌ [ADMIN] Error al obtener estadísticas de documentos: $e');
+      throw Exception('Error al obtener estadísticas de documentos: $e');
+    }
+  }
+  
+  // 🆕 NUEVO MÉTODO: Eliminar documento como administrador
+  Future<bool> deleteDocumentAsAdmin(int documentId, {bool force = false}) async {
+    try {
+      debugPrint('🗑️ [ADMIN] Eliminando documento como admin: ID=$documentId');
+      
+      final url = ApiConfig.deleteDocumentAdmin(documentId, force: force);
+      
+      debugPrint('🗑️ [ADMIN SERVICE] Deleting document: $url');
+      
+      final response = await _apiClient.delete(url);
+
+      if (response.statusCode == 200) {
+        debugPrint('✅ [ADMIN] Documento eliminado exitosamente');
+        return true;
+      } else {
+        debugPrint('❌ [ADMIN] Error al eliminar: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ [ADMIN] Error eliminando documento: $e');
+      throw Exception('Error al eliminar documento: $e');
+    }
+  }
+  
+  // Obtener estadísticas generales del sistema
   Future<Map<String, dynamic>> getAdminStatistics() async {
     try {
       debugPrint('🔄 [ADMIN] Cargando estadísticas del sistema...');
-      final headers = await _getHeaders();
       
-      // Intentar endpoint admin primero
-      String url = '${ApiConfig.baseUrl}/admin/statistics';
-      
-      try {
-        final response = await http.get(
-          Uri.parse(url),
-          headers: headers,
-        ).timeout(const Duration(seconds: 10));
+      // Usar el endpoint correcto para estadísticas generales
+      final response = await _apiClient.get(ApiConfig.adminStats);
 
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          debugPrint('✅ [ADMIN] Estadísticas cargadas');
-          return data;
-        }
-      } catch (e) {
-        debugPrint('⚠️ Endpoint admin no disponible, usando estadísticas normales...');
-      }
-      
-      // Fallback al endpoint normal
-      return {};
+      final data = json.decode(response.body);
+      debugPrint('✅ [ADMIN] Estadísticas generales cargadas');
+      return data;
     } catch (e) {
       debugPrint('❌ [ADMIN] Error al cargar estadísticas: $e');
       throw Exception('Error loading statistics: $e');

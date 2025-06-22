@@ -11,12 +11,13 @@ psycopg2-binary==2.9.9
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-decouple==3.8
+slowapi==0.1.9  # Rate limiting for FastAPI
 
 # AI & ML
 openai==1.3.5
 google-generativeai==0.3.0
 chromadb==0.4.18
-tiktoken==0.5.1
+tiktoken==0.7.0
 
 # File Processing
 PyPDF2==3.0.1
@@ -24,19 +25,21 @@ pdfplumber==0.10.3
 python-docx==1.1.0
 pandas==2.1.3
 openpyxl==3.1.2
+aiofiles==23.2.1  # Async file operations for streaming
 
 # Image Processing
 Pillow==10.1.0
 
 # Email
-# Descomentar si vas a usar SMTP
+aiosmtplib==3.0.1  # Async SMTP client for email tracking
+dnspython==2.4.2  # DNS resolution for MX record verification
 # smtplib  # Ya incluido en Python
 
 # Utilities
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
-httpx==0.25.2
+httpx>=0.24.0,<0.25.0
 tenacity==8.2.3
 
 # Development
@@ -48,5 +51,12 @@ flake8==6.1.0
 # Production
 gunicorn==21.2.0
 
+# WebSocket
+websockets==12.0
+websocket-client==1.7.0  # Para testing
+
 # Logging
 loguru==0.7.2
+
+# CLI utilities
+colorama==0.4.6  # Colores en terminal para Windows

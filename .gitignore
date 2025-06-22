@@ -1,0 +1,38 @@
+# Environment
+.env
+.env.local
+*.env
+
+# Docker volumes
+volumes/
+chromadb_data/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node/Flutter
+node_modules/
+.dart_tool/
+build/
+
+# Temporary
+*.tmp
+*.temp
+.cache/
+
+# Archivos de documentación 
+apuntes/

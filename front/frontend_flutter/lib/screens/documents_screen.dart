@@ -13,6 +13,7 @@ import '../services/document_service.dart';
 import '../services/auth_service.dart';
 import '../providers/documents_provider.dart';
 import '../widgets/share_document_dialog.dart';
+import '../utils/responsive_utils.dart';
 
 class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen({super.key});
@@ -51,25 +52,19 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       List<Document> allDocuments = [];
 
       // Cargar documentos propios
-      debugPrint('🔄 Iniciando carga de documentos...');
       final myDocs = await _documentService.listDocuments();
-      debugPrint('📄 Documentos propios cargados: ${myDocs.length}');
       allDocuments.addAll(myDocs);
 
       // Si NO es admin, también cargar documentos compartidos con él
       if (!(_currentUser?.isAdmin ?? false)) {
         try {
-          debugPrint('🔄 Cargando documentos compartidos...');
           final sharedDocs = await _documentService.getSharedWithMe();
-          debugPrint(
-              '📄 Documentos compartidos cargados: ${sharedDocs.length}');
           // Marcar los documentos compartidos
           for (var doc in sharedDocs) {
             doc.isShared = true;
           }
           allDocuments.addAll(sharedDocs);
         } catch (e) {
-          debugPrint('Error loading shared documents: $e');
           // Continuar sin documentos compartidos si hay error
         }
       }
@@ -78,9 +73,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         _documents = allDocuments;
         _isLoading = false;
       });
-      debugPrint('✅ Total documentos cargados: ${_documents.length}');
     } catch (e) {
-      debugPrint('❌ Error loading documents: $e');
       setState(() => _isLoading = false);
 
       if (e.toString().contains('No autenticado') ||
@@ -151,109 +144,222 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin = _currentUser?.isAdmin ?? false;
-
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return ResponsiveBuilder(
+      builder: (context, sizingInfo) {
+        return Scaffold(
+          backgroundColor: Colors.grey[50],
+          body: Padding(
+            padding: EdgeInsets.all(sizingInfo.padding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Mis Documentos',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C3E50),
-                      ),
-                    ),
-                    Text(
-                      '${_documents.length} documento${_documents.length != 1 ? 's' : ''}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-                ElevatedButton.icon(
-                  onPressed: _uploadDocument,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Subir Documento'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6B4CE6),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
+                // Header
+                _buildHeader(sizingInfo),
+                SizedBox(height: sizingInfo.spacing * 2),
 
-            // Barra de búsqueda y filtros
-            Row(
-              children: [
+                // Barra de búsqueda y filtros
+                _buildSearchAndFilters(sizingInfo),
+                SizedBox(height: sizingInfo.spacing * 2),
+
+                // Lista de documentos
                 Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar documentos...',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                              },
-                            )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
+                  child: _isLoading
+                      ? const Center(
+                          child:
+                              CircularProgressIndicator(color: Color(0xFF6B4CE6)))
+                      : _filteredDocuments.isEmpty
+                          ? _buildEmptyState(sizingInfo)
+                          : _buildDocumentsList(sizingInfo),
                 ),
-                const SizedBox(width: 16),
-                // Filtros
-                ..._buildFilterChips(),
               ],
             ),
-            const SizedBox(height: 24),
-
-            // Lista de documentos
-            Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child:
-                          CircularProgressIndicator(color: Color(0xFF6B4CE6)))
-                  : _filteredDocuments.isEmpty
-                      ? _buildEmptyState()
-                      : _buildDocumentsList(),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  List<Widget> _buildFilterChips() {
+  Widget _buildHeader(ResponsiveInfo sizingInfo) {
+    return sizingInfo.isMobile
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Mis Documentos',
+                    style: TextStyle(
+                      fontSize: sizingInfo.fontSize.title,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF2C3E50),
+                    ),
+                  ),
+                  SizedBox(height: sizingInfo.spacing / 2),
+                  Text(
+                    '${_documents.length} documento${_documents.length != 1 ? 's' : ''}',
+                    style: TextStyle(
+                      fontSize: sizingInfo.fontSize.body,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: sizingInfo.spacing),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _uploadDocument,
+                  icon: Icon(Icons.add, size: sizingInfo.fontSize.icon),
+                  label: Text(
+                    'Subir Documento',
+                    style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6B4CE6),
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: sizingInfo.cardPadding,
+                      vertical: sizingInfo.spacing,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          )
+        : Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Mis Documentos',
+                    style: TextStyle(
+                      fontSize: sizingInfo.fontSize.title,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF2C3E50),
+                    ),
+                  ),
+                  Text(
+                    '${_documents.length} documento${_documents.length != 1 ? 's' : ''}',
+                    style: TextStyle(
+                      fontSize: sizingInfo.fontSize.body,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+              ElevatedButton.icon(
+                onPressed: _uploadDocument,
+                icon: Icon(Icons.add, size: sizingInfo.fontSize.icon),
+                label: Text(
+                  'Subir Documento',
+                  style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6B4CE6),
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: sizingInfo.cardPadding,
+                    vertical: sizingInfo.spacing,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
+                  ),
+                ),
+              ),
+            ],
+          );
+  }
+
+  Widget _buildSearchAndFilters(ResponsiveInfo sizingInfo) {
+    if (sizingInfo.isMobile) {
+      return Column(
+        children: [
+          // Barra de búsqueda
+          TextField(
+            controller: _searchController,
+            style: TextStyle(fontSize: sizingInfo.fontSize.body),
+            decoration: InputDecoration(
+              hintText: 'Buscar documentos...',
+              hintStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+              prefixIcon: Icon(Icons.search, size: sizingInfo.fontSize.icon),
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: Icon(Icons.clear, size: sizingInfo.fontSize.icon),
+                      onPressed: () {
+                        _searchController.clear();
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: sizingInfo.cardPadding,
+                vertical: sizingInfo.spacing,
+              ),
+            ),
+          ),
+          SizedBox(height: sizingInfo.spacing),
+          // Filtros en línea horizontal con scroll
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: _buildFilterChips(sizingInfo),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            style: TextStyle(fontSize: sizingInfo.fontSize.body),
+            decoration: InputDecoration(
+              hintText: 'Buscar documentos...',
+              hintStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+              prefixIcon: Icon(Icons.search, size: sizingInfo.fontSize.icon),
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: Icon(Icons.clear, size: sizingInfo.fontSize.icon),
+                      onPressed: () {
+                        _searchController.clear();
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: sizingInfo.cardPadding,
+                vertical: sizingInfo.spacing,
+              ),
+            ),
+          ),
+        ),
+        SizedBox(width: sizingInfo.spacing),
+        // Filtros
+        ..._buildFilterChips(sizingInfo),
+      ],
+    );
+  }
+
+  List<Widget> _buildFilterChips(ResponsiveInfo sizingInfo) {
     final isAdmin = _currentUser?.isAdmin ?? false;
     final filters = ['Todos'];
 
@@ -267,9 +373,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     return filters.map((filter) {
       final isSelected = _selectedFilter == filter;
       return Padding(
-        padding: const EdgeInsets.only(left: 8),
+        padding: EdgeInsets.only(left: sizingInfo.spacing / 2),
         child: FilterChip(
-          label: Text(filter),
+          label: Text(
+            filter,
+            style: TextStyle(fontSize: sizingInfo.fontSize.caption),
+          ),
           selected: isSelected,
           onSelected: (selected) {
             setState(() {
@@ -280,13 +389,18 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           checkmarkColor: const Color(0xFF6B4CE6),
           labelStyle: TextStyle(
             color: isSelected ? const Color(0xFF6B4CE6) : Colors.grey[700],
+            fontSize: sizingInfo.fontSize.caption,
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: sizingInfo.spacing,
+            vertical: sizingInfo.spacing / 2,
           ),
         ),
       );
     }).toList();
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(ResponsiveInfo sizingInfo) {
     // Determinar qué mensaje mostrar según el filtro seleccionado
     String title;
     String subtitle;
@@ -303,168 +417,192 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
     
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.folder_open,
-            size: 80,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 24),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF2C3E50),
+      child: Padding(
+        padding: EdgeInsets.all(sizingInfo.padding),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.folder_open,
+              size: sizingInfo.fontSize.emptyStateIcon,
+              color: Colors.grey[400],
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
+            SizedBox(height: sizingInfo.spacing * 2),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.subtitle,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF2C3E50),
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-        ],
+            SizedBox(height: sizingInfo.spacing),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.body,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildDocumentsList() {
-    return ListView.builder(
-      itemCount: _filteredDocuments.length,
-      itemBuilder: (context, index) {
-        final doc = _filteredDocuments[index];
-        return _buildDocumentCard(doc);
-      },
+  Widget _buildDocumentsList(ResponsiveInfo sizingInfo) {
+    if (sizingInfo.isMobile || sizingInfo.isTablet) {
+      return ListView.builder(
+        itemCount: _filteredDocuments.length,
+        itemBuilder: (context, index) {
+          final doc = _filteredDocuments[index];
+          return _buildDocumentCard(doc, sizingInfo);
+        },
+      );
+    }
+
+    // Vista en grid para desktop
+    return ResponsiveGrid(
+      maxColumns: 3,
+      childAspectRatio: 3.5,
+      children: _filteredDocuments
+          .map((doc) => _buildDocumentCard(doc, sizingInfo))
+          .toList(),
     );
   }
 
-  Widget _buildDocumentCard(Document doc) {
+  Widget _buildDocumentCard(Document doc, ResponsiveInfo sizingInfo) {
     final isAdmin = _currentUser?.isAdmin ?? false;
     final isOwner = doc.uploadedBy == _currentUser?.id;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _openDocument(doc),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              // Icono del documento
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color:
-                      _getDocumentColor(doc.contentType).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  _getDocumentIcon(doc.contentType),
-                  color: _getDocumentColor(doc.contentType),
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 16),
+    return ResponsiveCard(
+      onTap: () => _openDocument(doc),
+      child: Row(
+        children: [
+          // Icono del documento
+          Container(
+            width: sizingInfo.listTileIconSize,
+            height: sizingInfo.listTileIconSize,
+            decoration: BoxDecoration(
+              color: _getDocumentColor(doc.contentType).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+            ),
+            child: Icon(
+              _getDocumentIcon(doc.contentType),
+              color: _getDocumentColor(doc.contentType),
+              size: sizingInfo.fontSize.icon,
+            ),
+          ),
+          SizedBox(width: sizingInfo.spacing),
 
-              // Información del documento
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          // Información del documento
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  doc.title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: sizingInfo.fontSize.body,
+                    color: const Color(0xFF2C3E50),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                SizedBox(height: sizingInfo.spacing / 2),
+                Row(
                   children: [
                     Text(
-                      doc.title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                        color: Color(0xFF2C3E50),
+                      _getDocumentType(doc.contentType),
+                      style: TextStyle(
+                        fontSize: sizingInfo.fontSize.caption,
+                        color: Colors.grey[600],
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Text(
-                          _getDocumentType(doc.contentType),
+                    if (!isAdmin && doc.isShared) ...[
+                      SizedBox(width: sizingInfo.spacing),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: sizingInfo.spacing,
+                          vertical: sizingInfo.spacing / 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius / 2),
+                        ),
+                        child: Text(
+                          'Compartido',
                           style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
+                            fontSize: sizingInfo.fontSize.caption * 0.9,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
-                        if (!isAdmin && doc.isShared) ...[
-                          const SizedBox(width: 8),
-                          Text(
-                            '• Compartido',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.blue[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-
-              // Acciones
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, color: Colors.grey[600]),
-                onSelected: (value) => _handleDocumentAction(value, doc),
-                itemBuilder: (context) {
-                  List<PopupMenuItem<String>> items = [];
-
-                  // Opción de compartir (solo para administradores y propietarios)
-                  if (isOwner && isAdmin) {
-                    items.add(
-                      const PopupMenuItem(
-                        value: 'share',
-                        child: Row(
-                          children: [
-                            Icon(Icons.share, size: 20),
-                            SizedBox(width: 8),
-                            Text('Compartir'),
-                          ],
-                        ),
-                      ),
-                    );
-                  }
-
-                  // Opción de eliminar (solo para propietarios)
-                  if (isOwner) {
-                    items.add(
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete, size: 20, color: Colors.red),
-                            SizedBox(width: 8),
-                            Text('Eliminar',
-                                style: TextStyle(color: Colors.red)),
-                          ],
-                        ),
-                      ),
-                    );
-                  }
-
-                  return items;
-                },
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+
+          // Acciones
+          PopupMenuButton<String>(
+            icon: Icon(
+              Icons.more_vert, 
+              color: Colors.grey[600],
+              size: sizingInfo.fontSize.icon,
+            ),
+            onSelected: (value) => _handleDocumentAction(value, doc),
+            itemBuilder: (context) {
+              List<PopupMenuItem<String>> items = [];
+
+              // Opción de compartir (solo para administradores y propietarios)
+              if (isOwner && isAdmin) {
+                items.add(
+                  PopupMenuItem(
+                    value: 'share',
+                    child: Row(
+                      children: [
+                        Icon(Icons.share, size: sizingInfo.fontSize.icon),
+                        SizedBox(width: sizingInfo.spacing),
+                        Text('Compartir', style: TextStyle(fontSize: sizingInfo.fontSize.body)),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              // Opción de eliminar (solo para propietarios)
+              if (isOwner) {
+                items.add(
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, size: sizingInfo.fontSize.icon, color: Colors.red),
+                        SizedBox(width: sizingInfo.spacing),
+                        Text(
+                          'Eliminar',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: sizingInfo.fontSize.body,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return items;
+            },
+          ),
+        ],
       ),
     );
   }
@@ -512,43 +650,50 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     if (confirm ?? false) {
       try {
         await _documentService.deleteDocument(doc.id);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Documento eliminado exitosamente'),
             backgroundColor: Colors.green,
           ),
         );
-        _loadDocuments();
+          _loadDocuments();
+        }
       } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al eliminar documento: $e'),
             backgroundColor: Colors.red,
           ),
         );
+        }
       }
     }
   }
 
   Future<void> _uploadDocument() async {
-    // Mostrar diálogo de selección de tipo
+    final sizingInfo = context.responsive;
+    
+    // Mostrar diálogo de selección de tipo con diseño responsive
     final fileType = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Seleccionar tipo de archivo'),
+        title: Text(
+          'Seleccionar tipo de archivo',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
-              title: const Text('PDF'),
+              leading: Icon(Icons.picture_as_pdf, color: Colors.red, size: sizingInfo.fontSize.icon),
+              title: Text('PDF', style: TextStyle(fontSize: sizingInfo.fontSize.body)),
               onTap: () => Navigator.pop(context, 'PDF'),
             ),
             ListTile(
-              leading: const Icon(Icons.text_snippet, color: Colors.blue),
-              title: const Text('Texto (TXT)'),
+              leading: Icon(Icons.text_snippet, color: Colors.blue, size: sizingInfo.fontSize.icon),
+              title: Text('Texto (TXT)', style: TextStyle(fontSize: sizingInfo.fontSize.body)),
               onTap: () => Navigator.pop(context, 'TXT'),
             ),
           ],
@@ -592,12 +737,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) => const AlertDialog(
+          builder: (context) => AlertDialog(
             content: Row(
               children: [
-                CircularProgressIndicator(color: Color(0xFF6B4CE6)),
-                SizedBox(width: 20),
-                Text('Subiendo documento...'),
+                const CircularProgressIndicator(color: Color(0xFF6B4CE6)),
+                SizedBox(width: sizingInfo.spacing * 2),
+                Text(
+                  'Subiendo documento...',
+                  style: TextStyle(fontSize: sizingInfo.fontSize.body),
+                ),
               ],
             ),
           ),
@@ -677,130 +825,203 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   void _openDocument(Document document) async {
+    final sizingInfo = context.responsive;
+    
     // Mostrar diálogo con opciones
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Documento: ${document.title}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  _getDocumentIcon(document.contentType),
-                  color: _getDocumentColor(document.contentType),
-                  size: 24,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    document.fileName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildInfoRow('Tipo:', _getDocumentType(document.contentType)),
-            if (document.fileSize != null)
-              _buildInfoRow('Tamaño:', _formatFileSize(document.fileSize!)),
-            _buildInfoRow('Estado:', _getDocumentStatus(document)),
-            if (document.isShared)
-              _buildInfoRow('Acceso:', 'Compartido'),
-            const SizedBox(height: 16),
-            if (document.fileUrl != null && document.fileUrl!.isNotEmpty) ...
-            [
-              const Divider(),
-              const SizedBox(height: 8),
-              const Text(
-                'Acciones disponibles:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
+        title: Text(
+          'Documento: ${document.title}',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _viewDocumentInBrowser(document);
-                    },
-                    icon: const Icon(Icons.open_in_new),
-                    label: const Text('Ver en navegador'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2196F3),
-                      foregroundColor: Colors.white,
-                    ),
+                  Icon(
+                    _getDocumentIcon(document.contentType),
+                    color: _getDocumentColor(document.contentType),
+                    size: sizingInfo.fontSize.icon,
                   ),
-                  if (!kIsWeb)
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _downloadDocument(document);
-                      },
-                      icon: const Icon(Icons.download),
-                      label: const Text('Descargar'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4CAF50),
-                        foregroundColor: Colors.white,
+                  SizedBox(width: sizingInfo.spacing),
+                  Expanded(
+                    child: Text(
+                      document.fileName,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: sizingInfo.fontSize.body,
                       ),
                     ),
+                  ),
                 ],
               ),
-            ] else ...
-            [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.shade200),
+              SizedBox(height: sizingInfo.spacing),
+              _buildInfoRow('Tipo:', _getDocumentType(document.contentType), sizingInfo),
+              if (document.fileSize != null)
+                _buildInfoRow('Tamaño:', _formatFileSize(document.fileSize!), sizingInfo),
+              _buildInfoRow('Estado:', _getDocumentStatus(document), sizingInfo),
+              if (document.isShared)
+                _buildInfoRow('Acceso:', 'Compartido', sizingInfo),
+              SizedBox(height: sizingInfo.spacing * 2),
+              if (document.fileUrl != null && document.fileUrl!.isNotEmpty) ...[
+                const Divider(),
+                SizedBox(height: sizingInfo.spacing),
+                Text(
+                  'Acciones disponibles:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: sizingInfo.fontSize.body,
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning, color: Colors.orange.shade700, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _getStatusMessage(document),
-                        style: const TextStyle(fontSize: 13),
+                SizedBox(height: sizingInfo.spacing),
+                if (sizingInfo.isMobile) ...[
+                  // Botones en columna para móvil
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _viewDocumentInBrowser(document);
+                      },
+                      icon: Icon(Icons.open_in_new, size: sizingInfo.fontSize.icon),
+                      label: Text(
+                        'Ver en navegador',
+                        style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2196F3),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(vertical: sizingInfo.spacing),
+                      ),
+                    ),
+                  ),
+                  if (!kIsWeb) ...[
+                    SizedBox(height: sizingInfo.spacing),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _downloadDocument(document);
+                        },
+                        icon: Icon(Icons.download, size: sizingInfo.fontSize.icon),
+                        label: Text(
+                          'Descargar',
+                          style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF4CAF50),
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(vertical: sizingInfo.spacing),
+                        ),
                       ),
                     ),
                   ],
+                ] else ...[
+                  // Botones en fila para tablet/desktop
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _viewDocumentInBrowser(document);
+                        },
+                        icon: Icon(Icons.open_in_new, size: sizingInfo.fontSize.icon),
+                        label: Text(
+                          'Ver en navegador',
+                          style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2196F3),
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      if (!kIsWeb)
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _downloadDocument(document);
+                          },
+                          icon: Icon(Icons.download, size: sizingInfo.fontSize.icon),
+                          label: Text(
+                            'Descargar',
+                            style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4CAF50),
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ] else ...[
+                Container(
+                  padding: EdgeInsets.all(sizingInfo.spacing),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.warning, 
+                        color: Colors.orange.shade700, 
+                        size: sizingInfo.fontSize.icon
+                      ),
+                      SizedBox(width: sizingInfo.spacing),
+                      Expanded(
+                        child: Text(
+                          _getStatusMessage(document),
+                          style: TextStyle(fontSize: sizingInfo.fontSize.caption),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(
+              'Cerrar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(String label, String value, ResponsiveInfo sizingInfo) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: EdgeInsets.symmetric(vertical: sizingInfo.spacing / 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 80,
+            width: sizingInfo.isSmallDevice ? 60 : 80,
             child: Text(
               label,
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              style: TextStyle(
+                color: Colors.grey[600], 
+                fontSize: sizingInfo.fontSize.caption
+              ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(fontSize: 14),
+              style: TextStyle(fontSize: sizingInfo.fontSize.body),
             ),
           ),
         ],
@@ -819,25 +1040,38 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     if (document.fileUrl == null || document.fileUrl!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('URL del documento no disponible'),
-          backgroundColor: Colors.red,
+          content: Text('Este documento no tiene un archivo asociado'),
+          backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
     try {
-      final Uri url = Uri.parse(document.fileUrl!);
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Abriendo ${document.title} en el navegador'),
-            backgroundColor: const Color(0xFF2196F3),
-          ),
-        );
+      // Para archivos PDF, abrir en nueva pestaña con visor nativo del navegador
+      if (document.contentType == 'application/pdf') {
+        // Asegurarse de que la URL sea absoluta
+        String fileUrl = document.fileUrl!;
+        if (!fileUrl.startsWith('http')) {
+          fileUrl = 'http://localhost:2690$fileUrl';
+        }
+        
+        final Uri url = Uri.parse(fileUrl);
+        
+        if (await canLaunchUrl(url)) {
+          await launchUrl(url, mode: LaunchMode.externalApplication);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Abriendo ${document.title} en el navegador'),
+              backgroundColor: const Color(0xFF2196F3),
+            ),
+          );
+        } else {
+          throw 'No se pudo abrir la URL';
+        }
       } else {
-        throw 'No se pudo abrir la URL';
+        // Para otros tipos de archivo, descargar
+        await _downloadDocument(document);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -927,8 +1161,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         filePath,
         onReceiveProgress: (received, total) {
           if (total != -1) {
-            final progress = (received / total * 100).toStringAsFixed(0);
-            debugPrint('Descarga: $progress%');
+            // Progress: (received / total * 100).toStringAsFixed(0)%
           }
         },
       );

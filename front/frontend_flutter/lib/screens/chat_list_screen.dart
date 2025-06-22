@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
-import 'chat.dart';
+import 'chat_with_websocket.dart';
+import '../utils/responsive_utils.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -12,8 +13,8 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   final ChatService _chatService = ChatService();
   final TextEditingController _searchController = TextEditingController();
-  List<ChatModel> _chats = [];
-  List<ChatModel> _filteredChats = [];
+  List<Chat> _chats = [];
+  List<Chat> _filteredChats = [];
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -114,8 +115,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       _filteredChats = _chats.where((chat) {
         final matchesTitle = chat.title.toLowerCase().contains(query);
         final matchesContent = chat.messages.any((message) =>
-            message.question.toLowerCase().contains(query) ||
-            message.answer.toLowerCase().contains(query));
+            message.content.toLowerCase().contains(query));
 
         return matchesTitle || matchesContent;
       }).toList();
@@ -127,7 +127,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-          builder: (context) => const ChatScreen()), // Corrección aquí
+          builder: (context) => const ChatWithWebSocketScreen())
     );
 
     // Cuando vuelves de ChatScreen, recarga los chats
@@ -135,11 +135,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   // SOLUCIÓN 1: Método para navegar a chat existente
-  Future<void> _navigateToExistingChat(ChatModel chat) async {
+  Future<void> _navigateToExistingChat(Chat chat) async {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ChatScreen(existingChat: chat),
+        builder: (context) => ChatWithWebSocketScreen(existingChat: chat),
       ),
     );
 
@@ -149,41 +149,55 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Column(
-        children: [
-          // Header
-          _buildHeader(),
+    return ResponsiveBuilder(
+      builder: (context, sizingInfo) {
+        return Scaffold(
+          backgroundColor: Colors.grey[50],
+          body: Column(
+            children: [
+              // Header
+              _buildHeader(sizingInfo),
 
-          // Barra de búsqueda
-          _buildSearchBar(),
+              // Barra de búsqueda
+              _buildSearchBar(sizingInfo),
 
-          // Lista de chats
-          Expanded(
-            child: _isLoading
-                ? _buildLoadingState()
-                : _errorMessage != null
-                    ? _buildErrorState()
-                    : _filteredChats.isEmpty
-                        ? _buildEmptyState()
-                        : _buildChatsList(),
+              // Lista de chats
+              Expanded(
+                child: _isLoading
+                    ? _buildLoadingState()
+                    : _errorMessage != null
+                        ? _buildErrorState(sizingInfo)
+                        : _filteredChats.isEmpty
+                            ? _buildEmptyState(sizingInfo)
+                            : _buildChatsList(sizingInfo),
+              ),
+            ],
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _navigateToNewChat, // Usar el método corregido
-        backgroundColor: const Color(0xFF6B4CE6),
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: const Text('Nuevo Chat'),
-      ),
+          floatingActionButton: sizingInfo.isMobile
+              ? FloatingActionButton(
+                  onPressed: _navigateToNewChat,
+                  backgroundColor: const Color(0xFF6B4CE6),
+                  foregroundColor: Colors.white,
+                  child: Icon(Icons.add, size: sizingInfo.fontSize.icon),
+                )
+              : FloatingActionButton.extended(
+                  onPressed: _navigateToNewChat,
+                  backgroundColor: const Color(0xFF6B4CE6),
+                  foregroundColor: Colors.white,
+                  icon: Icon(Icons.add, size: sizingInfo.fontSize.icon),
+                  label: Text(
+                    'Nuevo Chat',
+                    style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                  ),
+                ),
+        );
+      },
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(ResponsiveInfo sizingInfo) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(sizingInfo.padding),
       decoration: const BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -194,62 +208,114 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
+      child: sizingInfo.isMobile
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Mis Conversaciones',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2C3E50),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Mis Conversaciones',
+                            style: TextStyle(
+                              fontSize: sizingInfo.fontSize.title,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF2C3E50),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          SizedBox(height: sizingInfo.spacing / 2),
+                          Text(
+                            '${_filteredChats.length} conversación${_filteredChats.length != 1 ? 'es' : ''}',
+                            style: TextStyle(
+                              fontSize: sizingInfo.fontSize.caption,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: EdgeInsets.all(sizingInfo.iconPadding),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6B4CE6), Color(0xFFE91E63)],
+                        ),
+                        borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                      ),
+                      child: Icon(
+                        Icons.chat_bubble,
+                        color: Colors.white,
+                        size: sizingInfo.fontSize.largeIcon,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Mis Conversaciones',
+                        style: TextStyle(
+                          fontSize: sizingInfo.fontSize.title,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF2C3E50),
+                        ),
+                      ),
+                      SizedBox(height: sizingInfo.spacing / 2),
+                      Text(
+                        '${_filteredChats.length} conversación${_filteredChats.length != 1 ? 'es' : ''} con MentIA',
+                        style: TextStyle(
+                          fontSize: sizingInfo.fontSize.body,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '${_filteredChats.length} conversación${_filteredChats.length != 1 ? 'es' : ''} con MentIA',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey[600],
+                Container(
+                  padding: EdgeInsets.all(sizingInfo.spacing),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF6B4CE6), Color(0xFFE91E63)],
+                    ),
+                    borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
+                  ),
+                  child: Icon(
+                    Icons.chat_bubble,
+                    color: Colors.white,
+                    size: sizingInfo.fontSize.largeIcon,
                   ),
                 ),
               ],
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF6B4CE6), Color(0xFFE91E63)],
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.chat_bubble,
-              color: Colors.white,
-              size: 32,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
-  Widget _buildSearchBar() {
+  Widget _buildSearchBar(ResponsiveInfo sizingInfo) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(sizingInfo.cardPadding),
       color: Colors.white,
       child: TextField(
         controller: _searchController,
+        style: TextStyle(fontSize: sizingInfo.fontSize.body),
         decoration: InputDecoration(
           hintText: 'Buscar en conversaciones...',
-          prefixIcon: const Icon(Icons.search),
+          hintStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+          prefixIcon: Icon(Icons.search, size: sizingInfo.fontSize.icon),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.clear),
+                  icon: Icon(Icons.clear, size: sizingInfo.fontSize.icon),
                   onPressed: () {
                     _searchController.clear();
                     _filterChats();
@@ -257,19 +323,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 )
               : null,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
             borderSide: BorderSide(color: Colors.grey[300]!),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
             borderSide: BorderSide(color: Colors.grey[300]!),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
             borderSide: const BorderSide(color: Color(0xFF6B4CE6), width: 2),
           ),
           filled: true,
           fillColor: Colors.grey[50],
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: sizingInfo.cardPadding,
+            vertical: sizingInfo.spacing,
+          ),
         ),
       ),
     );
@@ -283,143 +353,161 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorState(ResponsiveInfo sizingInfo) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.error_outline,
-            size: 80,
-            color: Colors.red[300],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Error al cargar conversaciones',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Colors.red[700],
+      child: Padding(
+        padding: EdgeInsets.all(sizingInfo.padding),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: sizingInfo.fontSize.emptyStateIcon,
+              color: Colors.red[300],
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _errorMessage ?? 'Error desconocido',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
+            SizedBox(height: sizingInfo.spacing * 2),
+            Text(
+              'Error al cargar conversaciones',
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.subtitle,
+                fontWeight: FontWeight.w500,
+                color: Colors.red[700],
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _loadChats,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Reintentar'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF6B4CE6),
-              foregroundColor: Colors.white,
+            SizedBox(height: sizingInfo.spacing),
+            Text(
+              _errorMessage ?? 'Error desconocido',
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.body,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-        ],
+            SizedBox(height: sizingInfo.spacing * 3),
+            ElevatedButton.icon(
+              onPressed: _loadChats,
+              icon: Icon(Icons.refresh, size: sizingInfo.fontSize.icon),
+              label: Text(
+                'Reintentar',
+                style: TextStyle(fontSize: sizingInfo.fontSize.button),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6B4CE6),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: sizingInfo.cardPadding,
+                  vertical: sizingInfo.spacing,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(ResponsiveInfo sizingInfo) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(60),
+      child: Padding(
+        padding: EdgeInsets.all(sizingInfo.padding),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: sizingInfo.fontSize.emptyStateIcon * 2,
+              height: sizingInfo.fontSize.emptyStateIcon * 2,
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(sizingInfo.fontSize.emptyStateIcon),
+              ),
+              child: Icon(
+                Icons.chat_bubble_outline,
+                size: sizingInfo.fontSize.emptyStateIcon,
+                color: Colors.grey[400],
+              ),
             ),
-            child: Icon(
-              Icons.chat_bubble_outline,
-              size: 60,
-              color: Colors.grey[400],
+            SizedBox(height: sizingInfo.spacing * 3),
+            Text(
+              _searchController.text.isNotEmpty
+                  ? 'No se encontraron conversaciones'
+                  : 'No tienes conversaciones aún',
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.subtitle,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF2C3E50),
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            _searchController.text.isNotEmpty
-                ? 'No se encontraron conversaciones'
-                : 'No tienes conversaciones aún',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF2C3E50),
+            SizedBox(height: sizingInfo.spacing),
+            Text(
+              _searchController.text.isNotEmpty
+                  ? 'Intenta con otros términos de búsqueda'
+                  : 'Inicia tu primera conversación con MentIA',
+              style: TextStyle(
+                fontSize: sizingInfo.fontSize.body,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _searchController.text.isNotEmpty
-                ? 'Intenta con otros términos de búsqueda'
-                : 'Inicia tu primera conversación con MentIA',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildChatsList() {
+  Widget _buildChatsList(ResponsiveInfo sizingInfo) {
     return RefreshIndicator(
       onRefresh: _loadChats,
       color: const Color(0xFF6B4CE6),
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(sizingInfo.cardPadding),
         itemCount: _filteredChats.length,
         itemBuilder: (context, index) {
           final chat = _filteredChats[index];
-          return _buildChatCard(chat);
+          return _buildChatCard(chat, sizingInfo);
         },
       ),
     );
   }
 
-  Widget _buildChatCard(ChatModel chat) {
+  Widget _buildChatCard(Chat chat, ResponsiveInfo sizingInfo) {
     final lastMessage = chat.messages.isNotEmpty ? chat.messages.last : null;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: sizingInfo.spacing),
       elevation: 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
       ),
       child: InkWell(
-        onTap: () => _navigateToExistingChat(chat), // Usar el método corregido
-        borderRadius: BorderRadius.circular(12),
+        onTap: () => _navigateToExistingChat(chat),
+        borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(sizingInfo.cardPadding),
           child: Row(
             children: [
-              // Avatar de MentIA
+              // Avatar de MentIA responsive
               Container(
-                width: 50,
-                height: 50,
+                width: sizingInfo.listTileIconSize,
+                height: sizingInfo.listTileIconSize,
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFF6B4CE6), Color(0xFFE91E63)],
                   ),
-                  borderRadius: BorderRadius.circular(25),
+                  borderRadius: BorderRadius.circular(sizingInfo.listTileIconSize / 2),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.smart_toy,
                   color: Colors.white,
-                  size: 24,
+                  size: sizingInfo.fontSize.icon,
                 ),
               ),
 
-              const SizedBox(width: 16),
+              SizedBox(width: sizingInfo.spacing),
 
               // Información del chat
               Expanded(
@@ -428,22 +516,26 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   children: [
                     Text(
                       chat.title,
-                      style: const TextStyle(
-                        fontSize: 16,
+                      style: TextStyle(
+                        fontSize: sizingInfo.fontSize.body,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF2C3E50),
+                        color: const Color(0xFF2C3E50),
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    if (lastMessage != null) ...[
+                    if (lastMessage != null && sizingInfo.showDescriptions) ...[
+                      SizedBox(height: sizingInfo.spacing / 2),
                       Text(
-                        'Última pregunta: ${lastMessage.question}',
+                        lastMessage.isUser 
+                            ? 'Tú: ${lastMessage.content}'
+                            : 'MentIA: ${lastMessage.content}',
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: sizingInfo.fontSize.caption,
                           color: Colors.grey[600],
                           fontWeight: FontWeight.normal,
                         ),
-                        maxLines: 2,
+                        maxLines: sizingInfo.isSmallDevice ? 1 : 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
@@ -455,38 +547,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
               PopupMenuButton<String>(
                 onSelected: (action) => _handleChatAction(action, chat),
                 itemBuilder: (context) => [
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'open',
                     child: Row(
                       children: [
-                        Icon(Icons.open_in_new, size: 18),
-                        SizedBox(width: 12),
-                        Text('Abrir chat'),
+                        Icon(Icons.open_in_new, size: sizingInfo.fontSize.icon),
+                        SizedBox(width: sizingInfo.spacing),
+                        Text('Abrir chat', style: TextStyle(fontSize: sizingInfo.fontSize.body)),
                       ],
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'rename',
                     child: Row(
                       children: [
-                        Icon(Icons.edit, size: 18),
-                        SizedBox(width: 12),
-                        Text('Renombrar'),
+                        Icon(Icons.edit, size: sizingInfo.fontSize.icon),
+                        SizedBox(width: sizingInfo.spacing),
+                        Text('Renombrar', style: TextStyle(fontSize: sizingInfo.fontSize.body)),
                       ],
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'delete',
                     child: Row(
                       children: [
-                        Icon(Icons.delete, size: 18, color: Colors.red),
-                        SizedBox(width: 12),
-                        Text('Eliminar', style: TextStyle(color: Colors.red)),
+                        Icon(Icons.delete, size: sizingInfo.fontSize.icon, color: Colors.red),
+                        SizedBox(width: sizingInfo.spacing),
+                        Text('Eliminar', style: TextStyle(color: Colors.red, fontSize: sizingInfo.fontSize.body)),
                       ],
                     ),
                   ),
                 ],
-                child: const Icon(Icons.more_vert),
+                icon: Icon(
+                  Icons.more_vert,
+                  size: sizingInfo.fontSize.icon,
+                ),
               ),
             ],
           ),
@@ -495,10 +590,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
-  void _handleChatAction(String action, ChatModel chat) {
+  void _handleChatAction(String action, Chat chat) {
     switch (action) {
       case 'open':
-        _navigateToExistingChat(chat); // Usar el método corregido
+        _navigateToExistingChat(chat);
         break;
       case 'rename':
         _showRenameDialog(chat);
@@ -509,28 +604,39 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  void _showRenameDialog(ChatModel chat) {
+  void _showRenameDialog(Chat chat) {
     final controller = TextEditingController(text: chat.title);
+    final sizingInfo = context.responsive;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         ),
-        title: const Text('Renombrar Conversación'),
+        title: Text(
+          'Renombrar Conversación',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(
+          style: TextStyle(fontSize: sizingInfo.fontSize.body),
+          decoration: InputDecoration(
             labelText: 'Nuevo nombre',
-            border: OutlineInputBorder(),
+            labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+            ),
           ),
           autofocus: true,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(
+              'Cancelar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -544,15 +650,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF6B4CE6),
               foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: sizingInfo.cardPadding,
+                vertical: sizingInfo.spacing,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+              ),
             ),
-            child: const Text('Guardar'),
+            child: Text(
+              'Guardar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _renameChat(ChatModel chat, String newTitle) async {
+  Future<void> _renameChat(Chat chat, String newTitle) async {
     if (newTitle.isNotEmpty && newTitle != chat.title) {
       try {
         // Llamar al servicio para renombrar en el backend
@@ -585,20 +701,30 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  void _showDeleteDialog(ChatModel chat) {
+  void _showDeleteDialog(Chat chat) {
+    final sizingInfo = context.responsive;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         ),
-        title: const Text('Eliminar Conversación'),
+        title: Text(
+          'Eliminar Conversación',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
         content: Text(
-            '¿Estás seguro de que quieres eliminar la conversación "${chat.title}"? Esta acción no se puede deshacer.'),
+          '¿Estás seguro de que quieres eliminar la conversación "${chat.title}"? Esta acción no se puede deshacer.',
+          style: TextStyle(fontSize: sizingInfo.fontSize.body),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(
+              'Cancelar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -612,15 +738,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: sizingInfo.cardPadding,
+                vertical: sizingInfo.spacing,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+              ),
             ),
-            child: const Text('Eliminar'),
+            child: Text(
+              'Eliminar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _deleteChat(ChatModel chat) async {
+  Future<void> _deleteChat(Chat chat) async {
     try {
       // Llamar al servicio para eliminar en el backend
       await _chatService.deleteChat(chat.id);

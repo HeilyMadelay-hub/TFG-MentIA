@@ -3,18 +3,21 @@ Conector para la API de Gemini con patrón singleton.
 Gestiona las llamadas a Gemini para generación de texto y embeddings.
 """
 import os
-import logging
 from typing import List, Dict, Optional, Any
 import google.generativeai as genai
+from src.core.logging_config import get_logger
+from src.core.exceptions import ValidationException, ExternalServiceException
+from src.config.settings import get_settings
+from src.core.interfaces.connectors import IAIConnector
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+settings = get_settings()
 
-class GeminiConnector:
+class GeminiConnector(IAIConnector):
     """
     Implementación del patrón Singleton para las conexiones a Gemini.
     Maneja la autenticación y las llamadas a la API.
+    Implementa la interfaz IAIConnector.
     """
     # Atributo de clase que almacenará la única instancia (Singleton)
     _instance: Optional['GeminiConnector'] = None 
@@ -45,7 +48,7 @@ class GeminiConnector:
             
             # Si no se encuentra la API key, lanza un error
             if not api_key:
-                raise ValueError(
+                raise ValidationException(
                     "La variable de entorno GEMINI_API_KEY es requerida. "
                     "Asegúrate de configurarla en el archivo .env"
                 )
@@ -70,11 +73,11 @@ class GeminiConnector:
                 # Importar SentenceTransformer solo cuando se necesite
                 from sentence_transformers import SentenceTransformer
                 # Usar SentenceTransformer como alternativa a Gemini para embeddings
-                logger.info("Inicializando modelo de embeddings (SentenceTransformer)")
-                self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                logger.info(f"Inicializando modelo de embeddings ({settings.SENTENCE_TRANSFORMER_MODEL})")
+                self._embedding_model = SentenceTransformer(settings.SENTENCE_TRANSFORMER_MODEL)
             except ImportError as e:
                 logger.error(f"Error importando SentenceTransformer: {e}")
-                raise ImportError("SentenceTransformer no está instalado. Ejecuta: pip install sentence-transformers")
+                raise ExternalServiceException("SentenceTransformer no está instalado. Ejecuta: pip install sentence-transformers")
         return self._embedding_model
     
     def create_embeddings(self, texts: List[str], model: str = None) -> List[List[float]]:
@@ -96,10 +99,8 @@ class GeminiConnector:
             # Convertir a lista de listas para mantener compatibilidad
             return embeddings.tolist()
         except Exception as e:
-            # Registra un error si ocurre algún problema
-            logger.error(f"Error al generar embeddings: {str(e)}")
-            # Lanza la excepción para que sea manejada por el llamador
-            raise
+            logger.error(f"Error al generar embeddings: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error generando embeddings: {str(e)}")
     
     def generate_chat_completion(
         self, 
@@ -130,7 +131,7 @@ class GeminiConnector:
             
             # Separar el último mensaje del historial
             if not messages:
-                raise ValueError("No hay mensajes para procesar")
+                raise ValidationException("No hay mensajes para procesar")
             
             # Obtener el último mensaje (que será el prompt actual)
             last_message = messages[-1]
@@ -178,11 +179,11 @@ class GeminiConnector:
             # Devolver el texto generado
             return response.text
             
+        except ValidationException:
+            raise  # Re-lanzar excepciones ya manejadas
         except Exception as e:
-            # Registra un error si ocurre algún problema
-            logger.error(f"Error al generar respuesta: {str(e)}")
-            # Lanza la excepción para que sea manejada por el llamador
-            raise
+            logger.error(f"Error al generar respuesta: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error al generar respuesta con Gemini: {str(e)}")
     
     def generate_rag_response(
         self,
@@ -210,7 +211,7 @@ class GeminiConnector:
         try:
             # Validar que hay contexto
             if not context or not any(c.strip() for c in context):
-                raise ValueError("El contexto está vacío")
+                raise ValidationException("El contexto está vacío")
             
             # Une los fragmentos de contexto en un solo string, numerándolos
             context_text = "\n\n".join([f"Fragmento {i+1}: {text}" for i, text in enumerate(context) if text and text.strip()])
@@ -239,11 +240,111 @@ class GeminiConnector:
             
             return response.text
             
+        except ValidationException:
+            raise  # Re-lanzar excepciones ya manejadas
         except Exception as e:
-            # Registra un error si ocurre algún problema
-            logger.error(f"Error al generar respuesta RAG: {str(e)}")
-            # Lanza la excepción para que sea manejada por el llamador
-            raise
+            logger.error(f"Error al generar respuesta RAG: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error al generar respuesta RAG con Gemini: {str(e)}")
+    
+    async def stream_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        model: str = None  # Mantenido por compatibilidad
+    ):
+        """
+        Genera respuesta en streaming usando Gemini
+        
+        Args:
+            messages: Lista de mensajes de conversación
+            temperature: Temperatura de generación
+            max_tokens: Máximo de tokens
+            model: Modelo a usar (se ignora y usa config global)
+            
+        Yields:
+            str: Chunks de la respuesta
+        """
+        try:
+            # Obtener el cliente de Gemini
+            client = self.get_client()
+            
+            # Obtener el modelo de la configuración
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            gemini_model = client.GenerativeModel(model_name)
+            
+            # Separar el último mensaje del historial
+            if not messages:
+                yield "[Error: No hay mensajes para procesar]"
+                return
+            
+            # Obtener el último mensaje (que será el prompt actual)
+            last_message = messages[-1]
+            history_messages = messages[:-1] if len(messages) > 1 else []
+            
+            # Convertir historial a formato Gemini
+            gemini_history = []
+            for msg in history_messages:
+                # Gemini usa "user" y "model" como roles
+                if msg["role"].lower() == "user":
+                    role = "user"
+                elif msg["role"].lower() in ["assistant", "system"]:
+                    role = "model"
+                else:
+                    role = "user"  # Por defecto
+                
+                content = msg["content"]
+                if content and content.strip():  # Solo añadir si hay contenido
+                    gemini_history.append({
+                        "role": role, 
+                        "parts": [{"text": content}]
+                    })
+            
+            # Crear configuración de generación
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            
+            # Si hay historial, usar chat
+            if gemini_history:
+                chat = gemini_model.start_chat(history=gemini_history)
+                # Enviar el último mensaje con streaming
+                response = chat.send_message(
+                    last_message["content"],
+                    generation_config=generation_config,
+                    stream=True  # Habilitar streaming
+                )
+            else:
+                # Si no hay historial, generar directamente con streaming
+                response = gemini_model.generate_content(
+                    last_message["content"],
+                    generation_config=generation_config,
+                    stream=True  # Habilitar streaming
+                )
+            
+            # Yield chunks de la respuesta
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+                    
+        except Exception as e:
+            logger.error(f"Error en streaming Gemini: {str(e)}")
+            yield f"\n[Error: {str(e)}]"
+    
+    def count_tokens(self, text: str) -> int:
+        """
+        Cuenta los tokens en un texto.
+        
+        Args:
+            text: Texto a analizar
+            
+        Returns:
+            int: Número estimado de tokens
+        """
+        # Estimación simple: ~4 caracteres por token
+        # Para una estimación más precisa, usar el tokenizer de Gemini
+        return len(text) // 4
 
 # Función auxiliar para obtener la instancia del conector
 def get_gemini_connector() -> GeminiConnector:

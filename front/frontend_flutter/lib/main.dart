@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
+import 'services/token_refresh_service.dart';
 import 'providers/documents_provider.dart';
 import 'providers/dashboard_provider.dart';
 import 'screens/home_screen.dart';
-// import 'screens/register_screen.dart'; // No existe aún
+import 'screens/register_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/reset_password_screen.dart';
 import 'screens/forgot_password_screen.dart';
+import 'screens/email_verification_screen.dart';
+import 'utils/email_validator.dart';
+import 'utils/error_interceptor.dart';
 
 void main() {
   runApp(
@@ -16,7 +21,9 @@ void main() {
         ChangeNotifierProvider(create: (_) => DocumentsProvider()),
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
       ],
-      child: const MyApp(),
+      child: const TokenRefreshWrapper(
+        child: MyApp(),
+      ),
     ),
   );
 }
@@ -26,8 +33,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'DocuMente',
+    return ErrorInterceptorProvider(
+      child: MaterialApp(
+      title: 'MentIA',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: context.read<DocumentsProvider>().messengerKey,
       theme: ThemeData(
@@ -40,22 +48,32 @@ class MyApp extends StatelessWidget {
         final uri = Uri.parse(settings.name ?? '/');
 
         if (uri.path == '/' || settings.name == '/') {
-          // Verificar si hay token en la URL actual
-          final token = Uri.base.queryParameters['token'];
+          // Verificar si la URL actual tiene rutas específicas
+          final currentPath = Uri.base.path;
+          final currentToken = Uri.base.queryParameters['token'];
 
-          if (token != null && token.isNotEmpty) {
+          // Si estamos en la ruta de verificación de email
+          if (currentPath.contains('verify-email') && currentToken != null) {
             return MaterialPageRoute(
-              builder: (context) => ResetPasswordScreen(token: token),
+              builder: (context) =>
+                  EmailVerificationScreen(token: currentToken),
+            );
+          }
+          // Si estamos en la ruta de reset password
+          else if (currentPath.contains('reset_password_screen') &&
+              currentToken != null) {
+            return MaterialPageRoute(
+              builder: (context) => ResetPasswordScreen(token: currentToken),
             );
           }
 
           return MaterialPageRoute(
             builder: (context) => const AuthWrapper(),
           );
-        // } else if (uri.path == '/register') {
-        //   return MaterialPageRoute(
-        //     builder: (context) => const RegisterScreen(),
-        //   );
+        } else if (uri.path == '/register') {
+          return MaterialPageRoute(
+            builder: (context) => const RegisterScreen(),
+          );
         } else if (uri.path == '/forgot-password') {
           return MaterialPageRoute(
             builder: (context) => const ForgotPasswordScreen(),
@@ -64,6 +82,11 @@ class MyApp extends StatelessWidget {
           final token = uri.queryParameters['token'];
           return MaterialPageRoute(
             builder: (context) => ResetPasswordScreen(token: token),
+          );
+        } else if (uri.path == '/verify-email') {
+          final token = uri.queryParameters['token'];
+          return MaterialPageRoute(
+            builder: (context) => EmailVerificationScreen(token: token),
           );
         } else if (uri.path == '/home') {
           return MaterialPageRoute(
@@ -77,6 +100,7 @@ class MyApp extends StatelessWidget {
         );
       },
       initialRoute: '/',
+      ),
     );
   }
 }
@@ -133,242 +157,4 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 }
 
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
-
-class _LoginScreenState extends State<LoginScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _isLoading = false;
-  bool _obscurePassword = true;
-
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _login() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
-
-      try {
-        final authService = Provider.of<AuthService>(context, listen: false);
-        await authService.login(
-          _usernameController.text,
-          _passwordController.text,
-        );
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [const Color(0xFFE91E63), const Color(0xFFFF69B4)],
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Logo
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(
-                                0x1A000000), // 0x1A es 26 en hexadecimal (10% de opacidad)
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.description_outlined,
-                        size: 40,
-                        color: Color(0xFFE91E63),
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    // Title
-                    const Text(
-                      'DocuMente',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Tu asistente personal de documentos',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 16, color: Colors.white70),
-                    ),
-                    const SizedBox(height: 48),
-                    // Login form
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withAlpha(26),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          TextFormField(
-                            controller: _usernameController,
-                            decoration: InputDecoration(
-                              labelText: 'Usuario o Email',
-                              prefixIcon:
-                                  const Icon(Icons.account_circle_outlined),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Por favor ingrese su usuario o email';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            obscureText: _obscurePassword,
-                            decoration: InputDecoration(
-                              labelText: 'Contraseña',
-                              prefixIcon: const Icon(Icons.lock_outline),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_off
-                                      : Icons.visibility,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _obscurePassword = !_obscurePassword;
-                                  });
-                                },
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Por favor ingrese su contraseña';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 8),
-                          // Link olvidé contraseña
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const ForgotPasswordScreen(),
-                                  ),
-                                );
-                              },
-                              child: const Text(
-                                '¿Olvidaste tu contraseña?',
-                                style: TextStyle(
-                                  color: Color(0xFFE91E63),
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _isLoading ? null : _login,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE91E63),
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: _isLoading
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Iniciar Sesión',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                          ),
-
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+// LoginScreen ya está en screens/login_screen.dart

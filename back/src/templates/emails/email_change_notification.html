@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 20px auto; 
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header { 
+            background: linear-gradient(135deg, #6B4CE6 0%, #8B5CF6 100%);
+            color: white; 
+            padding: 40px 30px; 
+            text-align: center; 
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .header .icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        .content { 
+            padding: 40px 30px; 
+        }
+        .alert { 
+            background-color: #FFF3CD; 
+            border: 1px solid #FFEEBA;
+            color: #856404;
+            padding: 20px; 
+            border-radius: 8px;
+            margin: 20px 0; 
+            display: flex;
+            align-items: start;
+            gap: 15px;
+        }
+        .alert-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        .alert-content {
+            flex-grow: 1;
+        }
+        .email-change-box {
+            background-color: #F8F9FA;
+            border: 2px solid #E9ECEF;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .email-change-box .arrow {
+            font-size: 20px;
+            color: #6B4CE6;
+            margin: 10px 0;
+        }
+        .old-email {
+            color: #DC3545;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .new-email {
+            color: #28A745;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .button { 
+            display: inline-block; 
+            padding: 16px 40px; 
+            background: linear-gradient(135deg, #6B4CE6 0%, #8B5CF6 100%);
+            color: white !important; 
+            text-decoration: none !important; 
+            border-radius: 8px; 
+            margin: 30px 0; 
+            font-weight: bold !important; 
+            font-size: 16px !important; 
+            text-transform: uppercase !important; 
+            box-shadow: 0 4px 15px rgba(107, 76, 230, 0.3);
+            transition: all 0.3s ease;
+        }
+        .button:hover { 
+            background: linear-gradient(135deg, #5B3CC6 0%, #7B4CE6 100%);
+            box-shadow: 0 6px 20px rgba(107, 76, 230, 0.4);
+            transform: translateY(-2px);
+        }
+        .security-info {
+            background-color: #E8F4FD;
+            border-left: 4px solid #0084FF;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .security-info h3 {
+            margin: 0 0 10px 0;
+            color: #0066CC;
+            font-size: 16px;
+        }
+        .security-info ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .security-info li {
+            margin: 5px 0;
+        }
+        .footer { 
+            background-color: #F8F9FA;
+            padding: 20px;
+            text-align: center; 
+            font-size: 12px; 
+            color: #666; 
+            border-top: 1px solid #E9ECEF;
+        }
+        .footer p {
+            margin: 5px 0;
+        }
+        .warning-text {
+            color: #DC3545;
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 20px;
+        }
+        @media only screen and (max-width: 600px) {
+            .container {
+                margin: 0;
+                border-radius: 0;
+            }
+            .header, .content {
+                padding: 30px 20px;
+            }
+            .button {
+                padding: 14px 30px;
+                font-size: 14px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="icon">🔄</div>
+            <h1>Solicitud de Cambio de Email</h1>
+        </div>
+        <div class="content">
+            <h2>Hola {{username}},</h2>
+            
+            <div class="alert">
+                <span class="alert-icon">⚠️</span>
+                <div class="alert-content">
+                    <strong>Se ha solicitado cambiar tu dirección de email</strong>
+                    <p style="margin: 5px 0 0 0;">Si no realizaste esta solicitud, ignora este mensaje y tu cuenta permanecerá sin cambios.</p>
+                </div>
+            </div>
+            
+            <div class="email-change-box">
+                <div class="old-email">{{old_email}}</div>
+                <div class="arrow">↓</div>
+                <div class="new-email">{{new_email}}</div>
+            </div>
+            
+            <p><strong>Si realizaste esta solicitud</strong>, confirma el cambio haciendo clic en el siguiente botón:</p>
+            
+            <center>
+                <a href="{{confirmation_link}}" class="button" style="color: white !important; text-decoration: none !important;">
+                    ✅ CONFIRMAR CAMBIO DE EMAIL
+                </a>
+            </center>
+            
+            <div class="security-info">
+                <h3>🔒 Información de Seguridad</h3>
+                <ul>
+                    <li>Este enlace expirará en <strong>24 horas</strong></li>
+                    <li>Solo podrás acceder a tu cuenta con el nuevo email después de confirmarlo</li>
+                    <li>Recibirás una confirmación en tu nuevo email una vez completado el cambio</li>
+                </ul>
+            </div>
+            
+            <p class="warning-text">
+                ⚠️ Si no reconoces esta actividad, te recomendamos cambiar tu contraseña inmediatamente.
+            </p>
+        </div>
+        <div class="footer">
+            <p><strong>DocuMente</strong> - Tu asistente inteligente de documentos</p>
+            <p>© 2024 DocuMente. Todos los derechos reservados.</p>
+            <p style="color: #999; font-size: 11px;">Este es un mensaje automático, por favor no respondas a este email.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -10,7 +10,7 @@ class UserBase(BaseModel):
     @field_validator('username')
     def username_alphanumeric(cls, v):
         if not v.isalnum():
-            raise ValueError('debe contener solo caracteres alfanuméricos')
+            raise ValueError('El nombre de usuario debe contener solo caracteres alfanuméricos')
         return v
 
 class UserCreate(UserBase):
@@ -20,7 +20,7 @@ class UserCreate(UserBase):
     @field_validator('password')
     def password_min_length(cls, v):
         if len(v) < 8:
-            raise ValueError('debe tener al menos 8 caracteres')
+            raise ValueError('La contraseña debe tener al menos 8 caracteres')
         return v
 
 class UserUpdate(BaseModel):
@@ -31,7 +31,7 @@ class UserUpdate(BaseModel):
     @field_validator('username')
     def username_alphanumeric(cls, v):
         if v is not None and not v.isalnum():
-            raise ValueError('debe contener solo caracteres alfanuméricos')
+            raise ValueError('El nombre de usuario debe contener solo caracteres alfanuméricos')
         return v
 
 class UserResponse(BaseModel):
@@ -76,7 +76,7 @@ class ResetPasswordRequest(BaseModel):
     @field_validator('new_password')
     def password_min_length(cls, v):
         if len(v) < 8:
-            raise ValueError('debe tener al menos 8 caracteres')
+            raise ValueError('La nueva contraseña debe tener al menos 8 caracteres')
         return v
 
 class ResetPasswordSecureRequest(BaseModel):
@@ -87,13 +87,13 @@ class ResetPasswordSecureRequest(BaseModel):
     @field_validator('new_password')
     def password_min_length(cls, v):
         if len(v) < 8:
-            raise ValueError('debe tener al menos 8 caracteres')
+            raise ValueError('La nueva contraseña debe tener al menos 8 caracteres')
         return v
     
     @field_validator('code')
     def code_format(cls, v):
         if not v.isalnum():
-            raise ValueError('el código debe contener solo letras y números')
+            raise ValueError('El código debe contener solo letras y números')
         return v.upper()
 
 class ChangePasswordRequest(BaseModel):
@@ -103,7 +103,7 @@ class ChangePasswordRequest(BaseModel):
     @field_validator('new_password')
     def password_min_length(cls, v):
         if len(v) < 8:
-            raise ValueError('debe tener al menos 8 caracteres')
+            raise ValueError('La nueva contraseña debe tener al menos 8 caracteres')
         return v
 
 class RefreshTokenRequest(BaseModel):

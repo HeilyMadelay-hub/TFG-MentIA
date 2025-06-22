@@ -1,0 +1,3 @@
+"""
+Tests para endpoints específicos
+"""

@@ -1,11 +1,11 @@
 {
-    "name": "frontend_flutter",
-    "short_name": "frontend_flutter",
+    "name": "MentIA",
+    "short_name": "MentIA",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "MentIA - Tu asistente personal de documentos",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

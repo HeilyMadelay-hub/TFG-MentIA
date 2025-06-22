@@ -9,7 +9,15 @@ import uuid
 import hashlib
 import secrets
 
-from fastapi import HTTPException
+# Importar excepciones personalizadas
+from src.core.exceptions import (
+    UserNotFoundException,
+    ValidationException,
+    ConflictException,
+    ForbiddenException,
+    DatabaseException,
+    UnauthorizedException
+)
 
 from src.repositories.user_repository import UserRepository
 from src.models.domain import User
@@ -43,21 +51,13 @@ class UserService:
             User: El usuario creado
             
         Raises:
-            ValueError: Si el username ya existe
+            ValidationException: Si los datos son inválidos
+            ConflictException: Si el username o email ya existen
+            DatabaseException: Si hay error en la base de datos
         """
         try:
-            # Validar que el username no exista
-            existing_user = self.repository.get_by_username(user_data.username)
-            if existing_user:
-                raise ValueError("El nombre de usuario ya está en uso")
             
-            # Validar que el email no exista
-            if user_data.email:
-                existing_email = self.repository.get_by_email(user_data.email)
-                if existing_email:
-                    raise ValueError("El email ya está registrado")
-            
-            # Crear usuario (el hash de contraseña se hace en el repositorio)
+            # El repositorio se encarga de todas las validaciones y lanza las excepciones apropiadas
             user = self.repository.create_user(user_data)
             
             # Enviar email de verificación si hay email
@@ -88,7 +88,7 @@ class UserService:
             logger.error(f"Error al crear usuario: {str(e)}")
             raise
     
-    def get_user(self, user_id: int) -> Optional[User]:
+    def get_user(self, user_id: int) -> User:
         """
         Obtiene un usuario por su ID.
         
@@ -96,15 +96,15 @@ class UserService:
             user_id: ID del usuario a obtener
             
         Returns:
-            Optional[User]: El usuario encontrado o None
+            User: El usuario encontrado
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            return self.repository.get(user_id)
-        except Exception as e:
-            logger.error(f"Error al obtener usuario {user_id}: {str(e)}")
-            return None
+        return self.repository.get(user_id)
     
-    def get_by_id(self, user_id: int) -> Optional[User]:
+    def get_by_id(self, user_id: int) -> User:
         """
         Obtiene un usuario por su ID (síncrono - NO usar await).
         
@@ -112,28 +112,20 @@ class UserService:
             user_id: ID del usuario a obtener
             
         Returns:
-            Optional[User]: El usuario encontrado o None
+            User: El usuario encontrado
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            logger.info(f"=== UserService.get_by_id ===")
-            logger.info(f"Buscando usuario con ID: {user_id}")
-            
-            user = self.repository.get(user_id)
-            
-            if user:
-                logger.info(f"✅ Usuario encontrado: ID={user_id}, username={user.username}")
-            else:
-                logger.warning(f"❌ Usuario no encontrado: ID={user_id}")
-                
-            return user
-        except Exception as e:
-            logger.error(f"Error al obtener usuario {user_id}: {str(e)}")
-            logger.error(f"Tipo de excepción: {type(e).__name__}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return None
+        logger.info(f"=== UserService.get_by_id ===")
+        logger.info(f"Buscando usuario con ID: {user_id}")
+        
+        user = self.repository.get(user_id)
+        logger.info(f"✅ Usuario encontrado: ID={user_id}, username={user.username}")
+        return user
     
-    def get_user_by_username(self, username: str) -> Optional[User]:
+    def get_user_by_username(self, username: str) -> User:
         """
         Obtiene un usuario por su nombre de usuario.
         
@@ -141,15 +133,15 @@ class UserService:
             username: Nombre de usuario a buscar
             
         Returns:
-            Optional[User]: El usuario encontrado o None
+            User: El usuario encontrado
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            return self.repository.get_by_username(username)
-        except Exception as e:
-            logger.error(f"Error al obtener usuario por username {username}: {str(e)}")
-            return None
+        return self.repository.get_by_username_strict(username)
     
-    def get_user_by_email(self, email: str) -> Optional[User]:
+    def get_user_by_email(self, email: str) -> User:
         """
         Obtiene un usuario por su email.
         
@@ -157,17 +149,18 @@ class UserService:
             email: Email del usuario
             
         Returns:
-            Optional[User]: El usuario encontrado o None
+            User: El usuario encontrado
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            return self.repository.get_by_email(email)
-        except Exception as e:
-            logger.error(f"Error al obtener usuario por email: {str(e)}")
-            return None
+        return self.repository.get_by_email_strict(email)
     
-    def update_user(self, user_id: int, user_data: Dict[str, Any], current_user: User) -> Optional[User]:
+    def update_user(self, user_id: int, user_data: Dict[str, Any], current_user: User) -> Dict[str, Any]:
         """
         Actualiza un usuario existente con validación de permisos.
+        Si se cambia el email, requiere confirmación (excepto para admin).
         
         Args:
             user_id: ID del usuario a actualizar
@@ -175,67 +168,305 @@ class UserService:
             current_user: Usuario que está realizando la actualización
             
         Returns:
-            Optional[User]: El usuario actualizado o None si no existe
+            Dict[str, Any]: Resultado de la actualización con status
+            
+        Raises:
+            ForbiddenException: Si no tiene permisos
+            UserNotFoundException: Si el usuario no existe
+            ConflictException: Si el username o email ya existen
+            DatabaseException: Si hay error en la base de datos
         """
         try:
             # 1. VALIDAR PERMISOS
             if not current_user.is_admin and current_user.id != user_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="No tienes permisos para actualizar este usuario"
-                )
+                raise ForbiddenException("No tienes permisos para actualizar este usuario")
             
-            # 2. Obtener usuario actual (sin await porque no es async)
+            # 2. Obtener usuario actual - lanzará UserNotFoundException si no existe
             user = self.repository.get(user_id)
-            if not user:
-                logger.error(f"Usuario {user_id} no encontrado para actualizar")
-                return None
+            
+            # Guardar email anterior para comparación
+            old_email = user.email
+            email_is_changing = 'email' in user_data and user_data['email'] != old_email
             
             # Si se está actualizando el username, verificar que no exista
             if 'username' in user_data and user_data['username'] != user.username:
                 existing = self.repository.get_by_username(user_data['username'])
                 if existing:
-                    raise ValueError("El nombre de usuario ya está en uso")
+                    raise ConflictException(f"El nombre de usuario '{user_data['username']}' ya está en uso")
             
             # Si se está actualizando el email, verificar que no exista
-            if 'email' in user_data and user_data['email'] != user.email:
+            if email_is_changing:
                 existing = self.repository.get_by_email(user_data['email'])
                 if existing:
-                    raise ValueError("El email ya está registrado")
+                    raise ConflictException(f"El email '{user_data['email']}' ya está registrado")
             
-            # Actualizar usuario
-            success = self.repository.update(user, user_data)
-            
-            if success:
+            # Si es admin o no hay cambio de email, actualizar directamente
+            if current_user.is_admin or not email_is_changing:
+                # Actualizar usuario - lanzará DatabaseException si falla
+                self.repository.update(user, user_data)
+                
                 # 3. AGREGAR AUDITORÍA
                 logger.info(f"Usuario {current_user.username} (ID: {current_user.id}) actualizó al usuario {user_id}")
                 
                 # Obtener usuario actualizado
-                return self.repository.get(user_id)
+                updated_user = self.repository.get(user_id)
+                return {
+                    "status": "updated",
+                    "user": updated_user,
+                    "message": "Perfil actualizado exitosamente"
+                }
+            
+            # Si hay cambio de email y NO es admin, requerir confirmación
             else:
-                logger.error(f"No se pudo actualizar el usuario {user_id}")
-                return None
+                new_email = user_data['email']
                 
-        except HTTPException:
-            raise  # Re-lanzar excepciones HTTP tal cual
+                # Generar token de confirmación
+                confirmation_token = str(uuid.uuid4())
+                confirmation_expires = datetime.now(UTC) + timedelta(hours=24)
+                
+                # Guardar temporalmente los datos del cambio pendiente
+                # Usaremos los campos de verification_token para esto
+                pending_data = {
+                    "verification_token": confirmation_token,
+                    "verification_token_expires": confirmation_expires.isoformat()
+                }
+                
+                # Guardar el nuevo email en un campo temporal o en memoria
+                # Por ahora lo incluiremos en el token de forma segura
+                import json
+                import base64
+                
+                token_data = {
+                    "token": confirmation_token,
+                    "user_id": user_id,
+                    "old_email": old_email,
+                    "new_email": new_email,
+                    "expires": confirmation_expires.isoformat()
+                }
+                
+                # Codificar los datos del token
+                encoded_data = base64.b64encode(json.dumps(token_data).encode()).decode()
+                
+                # Guardar el token en la BD
+                self.repository.update(user, {
+                    "verification_token": encoded_data,
+                    "verification_token_expires": confirmation_expires.isoformat()
+                })
+                
+                # Actualizar otros campos que no son el email
+                other_updates = {k: v for k, v in user_data.items() if k != 'email'}
+                if other_updates:
+                    self.repository.update(user, other_updates)
+                
+                # Enviar email de confirmación al email ANTERIOR
+                try:
+                    email_service.send_email_change_notification(
+                        old_email=old_email,
+                        new_email=new_email,
+                        username=user.username,
+                        confirmation_token=confirmation_token
+                    )
+                    logger.info(f"Email de confirmación enviado a {old_email} para cambio a {new_email}")
+                except Exception as e:
+                    logger.error(f"Error enviando email de confirmación: {str(e)}")
+                    # Limpiar el token si falla el envío
+                    self.repository.update(user, {
+                        "verification_token": None,
+                        "verification_token_expires": None
+                    })
+                    raise DatabaseException("Error al enviar email de confirmación")
+                
+                return {
+                    "status": "pending_confirmation",
+                    "old_email": old_email,
+                    "new_email": new_email,
+                    "verification_token": confirmation_token,  # Incluir el token UUID
+                    "message": f"Se ha enviado un email de confirmación a {old_email}. Por favor, revisa tu correo."
+                }
+                
+        except (ForbiddenException, UserNotFoundException, ConflictException, DatabaseException):
+            raise  # Re-lanzar excepciones conocidas
         except Exception as e:
-            logger.error(f"Error al actualizar usuario {user_id}: {str(e)}")
-            raise
-    def delete_user(self, user_id: int) -> bool:
+            logger.error(f"Error inesperado al actualizar usuario {user_id}: {str(e)}")
+            raise DatabaseException(f"Error al actualizar usuario", original_error=e)
+    
+    def confirm_email_change(self, token: str) -> bool:
         """
-        Elimina un usuario del sistema.
+        Confirma el cambio de email usando el token de confirmación.
+        
+        Args:
+            token: Token de confirmación
+            
+        Returns:
+            bool: True si el cambio fue exitoso
+            
+        Raises:
+            ValidationException: Si el token es inválido o expiró
+            DatabaseException: Si hay error en la base de datos
+        """
+        try:
+            import json
+            import base64
+            from datetime import datetime, timezone
+            
+            logger.info(f"🔍 Token recibido para verificación: {token[:20]}...")
+            
+            # Buscar usuarios con tokens activos
+            supabase = get_supabase_client(use_service_role=True)
+            # Obtener todos los usuarios y filtrar en Python los que tienen token
+            response = supabase.table("users").select("*").execute()
+            
+            # Filtrar usuarios con tokens no nulos
+            users_with_tokens = [user for user in response.data if user.get('verification_token')]
+            
+            if not users_with_tokens:
+                logger.warning("❌ No se encontraron usuarios con tokens activos")
+                raise ValidationException("Token inválido o expirado")
+            
+            logger.info(f"📋 Encontrados {len(users_with_tokens)} usuarios con tokens de verificación")
+            
+            # Buscar el token que coincida
+            user_data = None
+            token_data = None
+            
+            for user in users_with_tokens:
+                try:
+                    # Decodificar el token almacenado
+                    stored_token = user.get('verification_token')
+                    if not stored_token:
+                        continue
+                        
+                    decoded = json.loads(base64.b64decode(stored_token).decode())
+                    stored_uuid = decoded.get('token')
+                    
+                    logger.debug(f"Comparando token almacenado: {stored_uuid[:20]}... con {token[:20]}...")
+                    
+                    # Verificar si el token coincide
+                    if stored_uuid == token:
+                        logger.info(f"✅ Token encontrado para usuario {user.get('username')} (ID: {user.get('id')})")
+                        user_data = user
+                        token_data = decoded
+                        break
+                except Exception as e:
+                    logger.warning(f"Error procesando token para usuario {user.get('id')}: {e}")
+                    continue
+            
+            # Si no se encontró por UUID, intentar búsqueda directa (por si el token está codificado)
+            if not user_data:
+                try:
+                    direct_response = supabase.table("users").select("*").eq("verification_token", token).execute()
+                    if direct_response.data and len(direct_response.data) > 0:
+                        logger.info(f"✅ Usuario encontrado por búsqueda directa")
+                        user_data = direct_response.data[0]
+                        # Si llegamos aquí, el token ya está codificado, decodificarlo
+                        decoded = json.loads(base64.b64decode(user_data['verification_token']).decode())
+                        token_data = decoded
+                except Exception as e:
+                    logger.debug(f"Búsqueda directa falló: {e}")
+            
+            if not user_data or not token_data:
+                logger.warning("❌ Token no encontrado en ninguna búsqueda")
+                raise ValidationException("Token inválido o expirado")
+            
+            # Verificar que no haya expirado
+            expires = datetime.fromisoformat(token_data['expires'].replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) > expires:
+                logger.warning(f"❌ Token expirado para usuario {user_data['id']}")
+                # Limpiar el token expirado
+                self.repository.update_by_id(user_data['id'], {
+                    "verification_token": None,
+                    "verification_token_expires": None
+                })
+                raise ValidationException("El token ha expirado")
+            
+            # Verificar que el email nuevo siga disponible
+            new_email = token_data['new_email']
+            old_email = token_data.get('old_email', user_data['email'])
+            
+            existing = self.repository.get_by_email(new_email)
+            if existing and existing.id != user_data['id']:
+                raise ConflictException(f"El email '{new_email}' ya está registrado")
+            
+            logger.info(f"✅ Token válido para usuario: {user_data['username']} (ID: {user_data['id']})")
+            logger.info(f"📧 Actualizando email de {old_email} a {new_email}")
+            
+            # Actualizar el email
+            update_success = self.repository.update_by_id(user_data['id'], {
+                "email": new_email,
+                "verification_token": None,
+                "verification_token_expires": None,
+                "email_verified": True,  # Marcar como verificado
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            })
+            
+            if update_success:
+                logger.info(f"✅ Email actualizado exitosamente para usuario {user_data['id']}")
+                
+                # Enviar email de confirmación al NUEVO email
+                try:
+                    if new_email:
+                        # Nota: Cambiar este método si quieres un email específico para cambio de email
+                        email_service.send_password_changed_email(
+                            to_email=new_email,
+                            username=user_data['username']
+                        )
+                        logger.info(f"📧 Email de confirmación enviado a {new_email}")
+                except Exception as e:
+                    logger.error(f"Error enviando email de confirmación: {str(e)}")
+                    # No fallar la operación por esto
+            else:
+                logger.error(f"❌ Error al actualizar el email en la base de datos")
+            
+            return update_success
+            
+        except (ValidationException, ConflictException):
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error no controlado en confirm_email_change: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise DatabaseException("Error al confirmar cambio de email", original_error=e)
+    
+    def delete_user(self, user_id: int, current_user: User) -> bool:
+        """
+        Elimina un usuario del sistema. Solo administradores pueden eliminar usuarios.
         
         Args:
             user_id: ID del usuario a eliminar
+            current_user: Usuario que está realizando la eliminación
             
         Returns:
             bool: True si se eliminó correctamente
+            
+        Raises:
+            ForbiddenException: Si no tiene permisos
+            UserNotFoundException: Si el usuario no existe
+            ValidationException: Si intenta eliminarse a sí mismo
+            DatabaseException: Si hay error en la base de datos
         """
         try:
-            return self.repository.delete(user_id)
+            # Validar permisos - solo administradores pueden eliminar usuarios
+            if not current_user.is_admin:
+                raise ForbiddenException("Solo los administradores pueden eliminar usuarios")
+                
+            # Verificar que el usuario existe - lanzará UserNotFoundException si no existe
+            user_to_delete = self.repository.get(user_id)
+                
+            # No permitir que un usuario se elimine a sí mismo
+            if current_user.id == user_id:
+                raise ValidationException("No puedes eliminarte a ti mismo")
+                
+            # Realizar la eliminación - lanzará DatabaseException si falla
+            self.repository.delete(user_id)
+            
+            logger.info(f"Usuario {current_user.username} (ID: {current_user.id}) eliminó al usuario ID: {user_id}")
+            return True
+            
+        except (ForbiddenException, UserNotFoundException, ValidationException, DatabaseException):
+            raise  # Re-lanzar excepciones conocidas
         except Exception as e:
-            logger.error(f"Error al eliminar usuario {user_id}: {str(e)}")
-            return False
+            logger.error(f"Error inesperado al eliminar usuario {user_id}: {str(e)}")
+            raise DatabaseException("Error interno al eliminar usuario", original_error=e)
     
     def list_users(self, limit: int = 100, offset: int = 0) -> List[User]:
         """
@@ -247,16 +478,15 @@ class UserService:
             
         Returns:
             List[User]: Lista de usuarios
+            
+        Raises:
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            return self.repository.list_all(limit=limit, offset=offset)
-        except Exception as e:
-            logger.error(f"Error al listar usuarios: {str(e)}")
-            return []
+        return self.repository.list_all(limit=limit, offset=offset)
     
     # ==================== AUTENTICACIÓN ====================
     
-    def authenticate_user(self, username: str, password: str) -> Optional[User]:
+    def authenticate_user(self, username: str, password: str) -> User:
         """
         Autentica un usuario con username y contraseña.
         
@@ -265,19 +495,23 @@ class UserService:
             password: Contraseña en texto plano
             
         Returns:
-            Optional[User]: El usuario autenticado o None si las credenciales son inválidas
+            User: El usuario autenticado
+            
+        Raises:
+            UnauthorizedException: Si las credenciales son inválidas
+            DatabaseException: Si hay error en la base de datos
         """
         try:
             # Buscar usuario
             user = self.repository.get_by_username(username)
             if not user:
                 logger.warning(f"Intento de login con usuario inexistente: {username}")
-                return None
+                raise UnauthorizedException("Credenciales inválidas")
             
             # Verificar contraseña
             if not verify_password(password, user.password_hash):
                 logger.warning(f"Contraseña incorrecta para usuario: {username}")
-                return None
+                raise UnauthorizedException("Credenciales inválidas")
             
             # Actualizar último login
             try:
@@ -305,12 +539,12 @@ class UserService:
             
         Returns:
             bool: True si la actualización fue exitosa
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            return self.repository.update_role(user_id, is_admin)
-        except Exception as e:
-            logger.error(f"Error al actualizar rol de usuario {user_id}: {str(e)}")
-            return False
+        return self.repository.update_role(user_id, is_admin)
     
     def is_admin(self, user_id: int) -> bool:
         """
@@ -324,7 +558,9 @@ class UserService:
         """
         try:
             user = self.repository.get(user_id)
-            return user.is_admin if user else False
+            return user.is_admin
+        except UserNotFoundException:
+            return False
         except Exception as e:
             logger.error(f"Error al verificar si usuario {user_id} es admin: {str(e)}")
             return False
@@ -341,23 +577,21 @@ class UserService:
             
         Returns:
             List[User]: Lista de usuarios que coinciden
+            
+        Raises:
+            DatabaseException: Si hay error en la base de datos
         """
-        try:
-            # Buscar por username
-            users_by_username = self.repository.search_by_username(query, limit=limit)
-            
-            # Buscar por email
-            users_by_email = self.repository.search_by_email(query, limit=limit)
-            
-            # Combinar resultados y eliminar duplicados
-            all_users = users_by_username + users_by_email
-            unique_users = {user.id: user for user in all_users}
-            
-            return list(unique_users.values())[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error al buscar usuarios con query '{query}': {str(e)}")
-            return []
+        # Buscar por username
+        users_by_username = self.repository.search_by_username(query, limit=limit)
+        
+        # Buscar por email
+        users_by_email = self.repository.search_by_email(query, limit=limit)
+        
+        # Combinar resultados y eliminar duplicados
+        all_users = users_by_username + users_by_email
+        unique_users = {user.id: user for user in all_users}
+        
+        return list(unique_users.values())[:limit]
     
     # ==================== GESTIÓN DE CONTRASEÑAS ====================
     
@@ -372,16 +606,19 @@ class UserService:
             
         Returns:
             bool: True si el cambio fue exitoso
+            
+        Raises:
+            UserNotFoundException: Si el usuario no existe
+            UnauthorizedException: Si la contraseña actual es incorrecta
+            DatabaseException: Si hay error en la base de datos
         """
         try:
-            # Obtener usuario
+            # Obtener usuario - lanzará UserNotFoundException si no existe
             user = self.repository.get(user_id)
-            if not user:
-                return False
             
             # Verificar contraseña actual
             if not verify_password(current_password, user.password_hash):
-                return False
+                raise UnauthorizedException("Contraseña actual incorrecta")
             
             # Actualizar contraseña
             new_hash = hash_password(new_password)
@@ -564,9 +801,20 @@ class UserService:
                     return False
             
             # Marcar como verificado
+            logger.info(f"📧 Actualizando email_verified=TRUE para usuario ID: {user_data['id']}")
             success = self.repository.update_email_verified(user_data['id'], True)
             
             if success:
+                logger.info(f"✅ Campo email_verified actualizado exitosamente para usuario {user_data['username']}")
+                
+                # Verificar que realmente se actualizó
+                supabase = get_supabase_client(use_service_role=True)
+                verify = supabase.table("users").select("email_verified").eq("id", user_data['id']).execute()
+                if verify.data and len(verify.data) > 0:
+                    actual_value = verify.data[0]['email_verified']
+                    logger.info(f"🔍 VERIFICACIÓN: email_verified = {actual_value}")
+                    if not actual_value:
+                        logger.error(f"❌ ERROR: email_verified NO se actualizó correctamente!")
                 # Limpiar token
                 self.repository.update(
                     self.repository.get(user_data['id']),
@@ -576,15 +824,8 @@ class UserService:
                     }
                 )
                 
-                # Enviar email de bienvenida
-                try:
-                    if user_data.get('email'):
-                        email_service.send_welcome_email(
-                            to_email=user_data['email'],
-                            username=user_data['username']
-                        )
-                except Exception as e:
-                    logger.error(f"Error enviando email de bienvenida: {str(e)}")
+                # Email de bienvenida removido - ya no se envia automaticamente
+                logger.info(f"Email verificado exitosamente para {user_data['username']} - No se envia email adicional")
             
             return success
             
@@ -669,7 +910,7 @@ class UserService:
                 "verified_users": verified_users
             }
             
-        except Exception as e:
+        except DatabaseException as e:
             logger.error(f"Error obteniendo estadísticas de usuarios: {str(e)}")
             return {
                 "total_users": 0,
@@ -693,8 +934,7 @@ class UserService:
             invalid_ids = []
             
             for user_id in user_ids:
-                user = self.repository.get(user_id)
-                if user:
+                if self.repository.exists(user_id):
                     valid_ids.append(user_id)
                 else:
                     invalid_ids.append(user_id)

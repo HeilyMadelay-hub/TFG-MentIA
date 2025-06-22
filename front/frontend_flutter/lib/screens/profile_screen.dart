@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../widgets/email_change_dialog.dart';
+import 'change_email_validation_screen.dart';
+import '../utils/responsive_utils.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -16,7 +21,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _currentPasswordController;
   late TextEditingController _newPasswordController;
   late TextEditingController _confirmPasswordController;
-  
+
   bool _isEditing = false;
   bool _isLoading = false;
   bool _showPasswordFields = false;
@@ -24,7 +29,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _showNewPassword = false;
   bool _showConfirmPassword = false;
 
-  // Configuraciones
+  // Método para verificar si el usuario es Ivan
+  bool _isUserIvan() {
+    final user = AuthService().currentUser;
+    return user?.username.toLowerCase() == 'ivan';
+  }
 
   @override
   void initState() {
@@ -51,32 +60,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final user = AuthService().currentUser;
 
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            // Header con información del usuario
-            _buildProfileHeader(user),
-            
-            const SizedBox(height: 24),
-            
-            // Información personal
-            _buildPersonalInfoSection(user),
-            
-            const SizedBox(height: 24),
-            
-            // Opciones adicionales
-            _buildAdditionalOptionsSection(),
-            
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
+    return ResponsiveBuilder(
+      builder: (context, sizingInfo) {
+        return Scaffold(
+          backgroundColor: Colors.grey[50],
+          body: SingleChildScrollView(
+            child: Column(
+              children: [
+                // Header con información del usuario
+                _buildProfileHeader(user, sizingInfo),
+
+                SizedBox(height: sizingInfo.spacing * 2),
+
+                // Contenedor con ancho máximo para desktop
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: sizingInfo.isDesktop ? 800 : double.infinity,
+                  ),
+                  child: Column(
+                    children: [
+                      // Información personal
+                      _buildPersonalInfoSection(user, sizingInfo),
+
+                      SizedBox(height: sizingInfo.spacing * 2),
+
+                      // Opciones adicionales
+                      _buildAdditionalOptionsSection(sizingInfo),
+
+                      SizedBox(height: sizingInfo.spacing * 2),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildProfileHeader(User? user) {
+  Widget _buildProfileHeader(User? user, ResponsiveInfo sizingInfo) {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -89,22 +112,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Color(0xFF2196F3),
           ],
         ),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(24),
-          bottomRight: Radius.circular(24),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(sizingInfo.borderRadius),
+          bottomRight: Radius.circular(sizingInfo.borderRadius),
         ),
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(sizingInfo.padding),
           child: Column(
             children: [
               // Avatar y badge de admin
               Stack(
                 children: [
                   Container(
-                    width: 100,
-                    height: 100,
+                    width: sizingInfo.isSmallDevice ? 80 : 100,
+                    height: sizingInfo.isSmallDevice ? 80 : 100,
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(50),
@@ -120,9 +143,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: Text(
                         user?.username.substring(0, 1).toUpperCase() ?? 'U',
                         style: TextStyle(
-                          fontSize: 36,
+                          fontSize: sizingInfo.fontSize.header,
                           fontWeight: FontWeight.bold,
-                          color: user?.isAdmin == true 
+                          color: user?.isAdmin == true
                               ? const Color(0xFF6B4CE6)
                               : Colors.grey[700],
                         ),
@@ -134,76 +157,82 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       bottom: 5,
                       right: 5,
                       child: Container(
-                        padding: const EdgeInsets.all(6),
+                        padding: EdgeInsets.all(sizingInfo.iconPadding / 2),
                         decoration: const BoxDecoration(
                           color: Color(0xFFFFD700),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.admin_panel_settings,
                           color: Colors.white,
-                          size: 16,
+                          size: sizingInfo.fontSize.smallIcon,
                         ),
                       ),
                     ),
                 ],
               ),
-              
-              const SizedBox(height: 16),
-              
+
+              SizedBox(height: sizingInfo.spacing),
+
               // Nombre y email
               Text(
                 user?.username ?? 'Usuario',
-                style: const TextStyle(
-                  fontSize: 24,
+                style: TextStyle(
+                  fontSize: sizingInfo.fontSize.title,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: sizingInfo.spacing / 2),
               Text(
                 user?.email ?? '',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: sizingInfo.fontSize.body,
                   color: Colors.white.withValues(alpha: 0.9),
                 ),
               ),
-              const SizedBox(height: 8),
-              
+              SizedBox(height: sizingInfo.spacing),
+
               // Role badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: EdgeInsets.symmetric(
+                  horizontal: sizingInfo.cardPadding,
+                  vertical: sizingInfo.spacing / 2,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      user?.isAdmin == true ? Icons.admin_panel_settings : Icons.person,
+                      user?.isAdmin == true
+                          ? Icons.admin_panel_settings
+                          : Icons.person,
                       color: Colors.white,
-                      size: 16,
+                      size: sizingInfo.fontSize.smallIcon,
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: sizingInfo.spacing / 2),
                     Text(
                       user?.isAdmin == true ? 'Administrador' : 'Usuario',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w500,
+                        fontSize: sizingInfo.fontSize.caption,
                       ),
                     ),
                   ],
                 ),
               ),
-              
-              const SizedBox(height: 16),
-              
+
+              SizedBox(height: sizingInfo.spacing),
+
               // Fecha de registro
               Text(
                 'Miembro desde ${_formatDate(user?.createdAt ?? DateTime.now())}',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: sizingInfo.fontSize.caption,
                   color: Colors.white.withValues(alpha: 0.8),
                 ),
               ),
@@ -214,13 +243,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildPersonalInfoSection(User? user) {
+  Widget _buildPersonalInfoSection(User? user, ResponsiveInfo sizingInfo) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
-      padding: const EdgeInsets.all(24),
+      margin: EdgeInsets.symmetric(horizontal: sizingInfo.padding),
+      padding: EdgeInsets.all(sizingInfo.cardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -235,44 +264,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Información Personal',
                 style: TextStyle(
-                  fontSize: 20,
+                  fontSize: sizingInfo.fontSize.sectionTitle,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF2C3E50),
+                  color: const Color(0xFF2C3E50),
                 ),
               ),
               _isEditing
-                ? IconButton(
-                    icon: const Icon(Icons.close, color: Colors.purple),
-                    onPressed: _isLoading ? null : () {
-                      setState(() {
-                        _isEditing = false;
-                        // Resetear campos si se cancela la edición
-                        _usernameController.text = user?.username ?? '';
-                        _emailController.text = user?.email ?? '';
-                        _showPasswordFields = false;
-                      });
-                    },
-                  )
-                : TextButton.icon(
-                    onPressed: _isLoading ? null : () {
-                      setState(() {
-                        _isEditing = true;
-                      });
-                    },
-                    icon: const Icon(Icons.edit),
-                    label: const Text('Editar'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF6B4CE6),
+                  ? IconButton(
+                      icon: Icon(Icons.close, 
+                        color: Colors.purple,
+                        size: sizingInfo.fontSize.icon,
+                      ),
+                      onPressed: _isLoading ||
+                              !_formKey.currentState!.validate()
+                          ? null
+                          : () {
+                              setState(() {
+                                _isEditing = false;
+                                // Resetear campos si se cancela la edición
+                                _usernameController.text = user?.username ?? '';
+                                _emailController.text = user?.email ?? '';
+                                _showPasswordFields = false;
+                                _formKey.currentState?.reset();
+                              });
+                            },
+                    )
+                  : TextButton.icon(
+                      onPressed: _isLoading
+                          ? null
+                          : () {
+                              setState(() {
+                                _isEditing = true;
+                              });
+                            },
+                      icon: Icon(Icons.edit, size: sizingInfo.fontSize.smallIcon),
+                      label: Text('Editar', 
+                        style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF6B4CE6),
+                      ),
                     ),
-                  ),
             ],
           ),
-          
-          const SizedBox(height: 24),
-          
+          SizedBox(height: sizingInfo.spacing * 2),
           Form(
             key: _formKey,
             child: Column(
@@ -281,14 +319,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 TextFormField(
                   controller: _usernameController,
                   enabled: _isEditing,
+                  style: TextStyle(fontSize: sizingInfo.fontSize.body),
                   decoration: InputDecoration(
                     labelText: 'Nombre de usuario',
-                    prefixIcon: const Icon(Icons.person_outline),
+                    labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+                    prefixIcon: Icon(Icons.person_outline, size: sizingInfo.fontSize.icon),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
                     ),
                     filled: true,
                     fillColor: _isEditing ? null : Colors.grey[100],
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: sizingInfo.cardPadding,
+                      vertical: sizingInfo.spacing,
+                    ),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -300,37 +344,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     return null;
                   },
                 ),
-                
-                const SizedBox(height: 16),
-                
+
+                SizedBox(height: sizingInfo.spacing),
+
                 // Campo de email
                 TextFormField(
                   controller: _emailController,
                   enabled: _isEditing,
                   keyboardType: TextInputType.emailAddress,
+                  style: TextStyle(fontSize: sizingInfo.fontSize.body),
                   decoration: InputDecoration(
                     labelText: 'Correo electrónico',
-                    prefixIcon: const Icon(Icons.email_outlined),
+                    labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+                    prefixIcon: Icon(Icons.email_outlined, size: sizingInfo.fontSize.icon),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
                     ),
                     filled: true,
                     fillColor: _isEditing ? null : Colors.grey[100],
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: sizingInfo.cardPadding,
+                      vertical: sizingInfo.spacing,
+                    ),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'El correo electrónico es requerido';
                     }
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                    if (!value.contains('@')) {
+                      return 'El correo debe contener el símbolo @';
+                    }
+                    // Solo validar que sea @gmail.com si NO es Ivan
+                    if (!_isUserIvan() && !value.endsWith('@gmail.com')) {
+                      return 'Solo se permiten correos @gmail.com';
+                    }
+                    if (!RegExp(r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$')
+                        .hasMatch(value)) {
                       return 'Ingresa un correo válido';
                     }
                     return null;
                   },
                 ),
-                
+
                 if (_isEditing) ...[
-                  const SizedBox(height: 16),
-                  
+                  SizedBox(height: sizingInfo.spacing),
+
                   // Botón para cambiar contraseña
                   OutlinedButton.icon(
                     onPressed: () {
@@ -343,27 +401,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         }
                       });
                     },
-                    icon: const Icon(Icons.lock_outline),
-                    label: const Text('Cambiar contraseña'),
+                    icon: Icon(Icons.lock_outline, size: sizingInfo.fontSize.icon),
+                    label: Text('Cambiar contraseña',
+                      style: TextStyle(fontSize: sizingInfo.fontSize.button),
+                    ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFF6B4CE6),
                       side: const BorderSide(color: Color(0xFF6B4CE6)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      minimumSize: const Size(double.infinity, 48),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: sizingInfo.cardPadding, 
+                          vertical: sizingInfo.spacing,
+                      ),
+                      minimumSize: Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                      ),
                     ),
                   ),
-                  
+
                   // Campos de contraseña
                   if (_showPasswordFields) ...[
-                    const SizedBox(height: 16),
+                    SizedBox(height: sizingInfo.spacing),
                     TextFormField(
                       controller: _currentPasswordController,
                       obscureText: !_showCurrentPassword,
+                      style: TextStyle(fontSize: sizingInfo.fontSize.body),
                       decoration: InputDecoration(
                         labelText: 'Contraseña actual',
-                        prefixIcon: const Icon(Icons.lock_outline),
+                        labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+                        prefixIcon: Icon(Icons.lock_outline, size: sizingInfo.fontSize.icon),
                         suffixIcon: IconButton(
-                          icon: Icon(_showCurrentPassword ? Icons.visibility : Icons.visibility_off),
+                          icon: Icon(_showCurrentPassword
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                            size: sizingInfo.fontSize.icon,
+                          ),
                           onPressed: () {
                             setState(() {
                               _showCurrentPassword = !_showCurrentPassword;
@@ -371,25 +443,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           },
                         ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: sizingInfo.cardPadding,
+                          vertical: sizingInfo.spacing,
                         ),
                       ),
                       validator: (value) {
-                        if (_showPasswordFields && (value == null || value.isEmpty)) {
+                        if (_showPasswordFields &&
+                            (value == null || value.isEmpty)) {
                           return 'Ingresa tu contraseña actual';
                         }
                         return null;
                       },
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: sizingInfo.spacing),
                     TextFormField(
                       controller: _newPasswordController,
                       obscureText: !_showNewPassword,
+                      style: TextStyle(fontSize: sizingInfo.fontSize.body),
                       decoration: InputDecoration(
                         labelText: 'Nueva contraseña',
-                        prefixIcon: const Icon(Icons.lock_outline),
+                        labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+                        prefixIcon: Icon(Icons.lock_outline, size: sizingInfo.fontSize.icon),
                         suffixIcon: IconButton(
-                          icon: Icon(_showNewPassword ? Icons.visibility : Icons.visibility_off),
+                          icon: Icon(_showNewPassword
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                            size: sizingInfo.fontSize.icon,
+                          ),
                           onPressed: () {
                             setState(() {
                               _showNewPassword = !_showNewPassword;
@@ -397,11 +480,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           },
                         ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: sizingInfo.cardPadding,
+                          vertical: sizingInfo.spacing,
                         ),
                       ),
                       validator: (value) {
-                        if (_showPasswordFields && (value == null || value.isEmpty)) {
+                        if (_showPasswordFields &&
+                            (value == null || value.isEmpty)) {
                           return 'Ingresa la nueva contraseña';
                         }
                         if (_showPasswordFields && value!.length < 6) {
@@ -410,15 +498,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         return null;
                       },
                     ),
-                    const SizedBox(height: 16),
+                    SizedBox(height: sizingInfo.spacing),
                     TextFormField(
                       controller: _confirmPasswordController,
                       obscureText: !_showConfirmPassword,
+                      style: TextStyle(fontSize: sizingInfo.fontSize.body),
                       decoration: InputDecoration(
                         labelText: 'Confirmar nueva contraseña',
-                        prefixIcon: const Icon(Icons.lock_outline),
+                        labelStyle: TextStyle(fontSize: sizingInfo.fontSize.body),
+                        prefixIcon: Icon(Icons.lock_outline, size: sizingInfo.fontSize.icon),
                         suffixIcon: IconButton(
-                          icon: Icon(_showConfirmPassword ? Icons.visibility : Icons.visibility_off),
+                          icon: Icon(_showConfirmPassword
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                            size: sizingInfo.fontSize.icon,
+                          ),
                           onPressed: () {
                             setState(() {
                               _showConfirmPassword = !_showConfirmPassword;
@@ -426,35 +520,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           },
                         ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: sizingInfo.cardPadding,
+                          vertical: sizingInfo.spacing,
                         ),
                       ),
                       validator: (value) {
-                        if (_showPasswordFields && value != _newPasswordController.text) {
+                        if (_showPasswordFields &&
+                            value != _newPasswordController.text) {
                           return 'Las contraseñas no coinciden';
                         }
                         return null;
                       },
                     ),
                   ],
-                  
-                  const SizedBox(height: 24),
-                  
+
+                  SizedBox(height: sizingInfo.spacing * 2),
+
                   // Botón de guardar
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
+                    height: sizingInfo.isSmallDevice ? 44 : 48,
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _saveProfile,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF6B4CE6),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
                         ),
                       ),
                       child: _isLoading
-                          ? const SizedBox(
+                          ? SizedBox(
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(
@@ -462,10 +561,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 strokeWidth: 2,
                               ),
                             )
-                          : const Text(
+                          : Text(
                               'Guardar Cambios',
                               style: TextStyle(
-                                fontSize: 16,
+                                fontSize: sizingInfo.fontSize.button,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -480,17 +579,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-
-
-
-
-  Widget _buildAdditionalOptionsSection() {
+  Widget _buildAdditionalOptionsSection(ResponsiveInfo sizingInfo) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
-      padding: const EdgeInsets.all(24),
+      margin: EdgeInsets.symmetric(horizontal: sizingInfo.padding),
+      padding: EdgeInsets.all(sizingInfo.cardPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -502,16 +597,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Más Opciones',
             style: TextStyle(
-              fontSize: 20,
+              fontSize: sizingInfo.fontSize.sectionTitle,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF2C3E50),
+              color: const Color(0xFF2C3E50),
             ),
           ),
-          const SizedBox(height: 16),
-          
+          SizedBox(height: sizingInfo.spacing),
           _buildSettingsItem(
             icon: Icons.help_outline,
             title: 'Ayuda y Soporte',
@@ -519,8 +613,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () {
               _showHelpDialog();
             },
+            sizingInfo: sizingInfo,
           ),
-          
           _buildSettingsItem(
             icon: Icons.info_outline,
             title: 'Acerca de DocuMente',
@@ -528,8 +622,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () {
               _showAboutDialog();
             },
+            sizingInfo: sizingInfo,
           ),
-          
           _buildSettingsItem(
             icon: Icons.logout,
             title: 'Cerrar Sesión',
@@ -539,6 +633,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             },
             textColor: Colors.red,
             iconColor: Colors.red,
+            sizingInfo: sizingInfo,
           ),
         ],
       ),
@@ -552,19 +647,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required VoidCallback onTap,
     Color? textColor,
     Color? iconColor,
+    required ResponsiveInfo sizingInfo,
   }) {
     return ListTile(
-      contentPadding: EdgeInsets.zero,
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: 0,
+        vertical: sizingInfo.listTilePadding,
+      ),
       leading: Container(
-        padding: const EdgeInsets.all(8),
+        padding: EdgeInsets.all(sizingInfo.iconPadding),
         decoration: BoxDecoration(
           color: (iconColor ?? const Color(0xFF6B4CE6)).withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius / 2),
         ),
         child: Icon(
           icon,
           color: iconColor ?? const Color(0xFF6B4CE6),
-          size: 20,
+          size: sizingInfo.fontSize.icon,
         ),
       ),
       title: Text(
@@ -572,25 +671,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
         style: TextStyle(
           fontWeight: FontWeight.w500,
           color: textColor ?? const Color(0xFF2C3E50),
+          fontSize: sizingInfo.fontSize.body,
         ),
       ),
-      subtitle: Text(
+      subtitle: sizingInfo.showDescriptions ? Text(
         subtitle,
         style: TextStyle(
           color: Colors.grey[600],
+          fontSize: sizingInfo.fontSize.caption,
         ),
+      ) : null,
+      trailing: Icon(Icons.arrow_forward_ios, 
+        size: sizingInfo.fontSize.smallIcon,
       ),
-      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
       onTap: onTap,
     );
   }
 
   String _formatDate(DateTime date) {
     const months = [
-      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre'
     ];
-    
+
     return '${date.day} de ${months[date.month - 1]} de ${date.year}';
   }
 
@@ -601,6 +714,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
 
       try {
+        final user = AuthService().currentUser;
+        
+        // Verificar si el email ha cambiado
+        final emailChanged = _emailController.text != user?.email;
+        
+        if (emailChanged && !_isUserIvan()) {
+          // Si el email ha cambiado y NO es Ivan, usar el nuevo flujo de validación
+          setState(() {
+            _isLoading = false;
+          });
+          
+          // Navegar a la pantalla de validación de email
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ChangeEmailValidationScreen(
+                newEmail: _emailController.text,
+              ),
+            ),
+          );
+          
+          if (result == true) {
+            // Email actualizado exitosamente
+            setState(() {
+              _isEditing = false;
+              _showPasswordFields = false;
+              _currentPasswordController.clear();
+              _newPasswordController.clear();
+              _confirmPasswordController.clear();
+            });
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Email actualizado exitosamente'),
+                  backgroundColor: Color(0xFF4CAF50),
+                ),
+              );
+            }
+          }
+          
+          return; // Salir del método
+        }
+        
+        // Para otros cambios (username, password) o si es Ivan
         // Preparar datos para actualizar
         final updateData = <String, dynamic>{
           'username': _usernameController.text,
@@ -613,29 +771,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
           updateData['new_password'] = _newPasswordController.text;
         }
 
-        // Simular actualización
-        final success = await AuthService().updateProfile(updateData);
+        // Llamar al servicio de autenticación
+        final result = await AuthService().updateProfile(updateData);
 
         setState(() {
           _isLoading = false;
         });
 
-        if (success) {
-          setState(() {
-            _isEditing = false;
-            _showPasswordFields = false;
-            _currentPasswordController.clear();
-            _newPasswordController.clear();
-            _confirmPasswordController.clear();
-          });
+        if (result) {
+          // Verificar si hay confirmación pendiente
+          final prefs = await SharedPreferences.getInstance();
+          final pendingEmailChange = prefs.getString('pending_email_change');
+          
+          if (pendingEmailChange != null) {
+            // Mostrar diálogo de confirmación pendiente
+            final pendingData = json.decode(pendingEmailChange);
+            
+            if (mounted) {
+              // Extraer el token de verificación si está disponible
+              String? verificationToken;
+              
+              // Si hay información de verificación almacenada, intentar extraer el token
+              if (pendingData['token'] != null) {
+                verificationToken = pendingData['token'];
+              } else if (pendingData['verification_token'] != null) {
+                verificationToken = pendingData['verification_token'];
+              }
+              
+              showEmailChangeConfirmationDialog(
+                context,
+                oldEmail: pendingData['old_email'],
+                newEmail: pendingData['new_email'],
+                verificationToken: verificationToken,
+                onVerified: () {
+                  // Recargar datos del usuario
+                  setState(() {});
+                },
+              );
+            }
+            
+            // Limpiar el estado de cambio pendiente
+            await prefs.remove('pending_email_change');
+          } else {
+            // Actualización exitosa sin confirmación pendiente
+            setState(() {
+              _isEditing = false;
+              _showPasswordFields = false;
+              _currentPasswordController.clear();
+              _newPasswordController.clear();
+              _confirmPasswordController.clear();
+            });
 
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Perfil actualizado exitosamente'),
-                backgroundColor: Color(0xFF4CAF50),
-              ),
-            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Perfil actualizado exitosamente'),
+                  backgroundColor: Color(0xFF4CAF50),
+                ),
+              );
+            }
           }
         } else {
           if (mounted) {
@@ -651,11 +845,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           _isLoading = false;
         });
+
+        String errorMessage = 'Error al actualizar el perfil';
         
+        // Extraer mensaje de error específico
+        if (e.toString().contains('email_already_exists') || 
+            e.toString().contains('ya está registrado')) {
+          errorMessage = 'Este email ya está registrado';
+        } else if (e.toString().contains('username') && 
+                   e.toString().contains('ya está en uso')) {
+          errorMessage = 'Este nombre de usuario ya está en uso';
+        }
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error al actualizar el perfil'),
+            SnackBar(
+              content: Text(errorMessage),
               backgroundColor: Colors.red,
             ),
           );
@@ -664,28 +869,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-
-
-
-
   void _showHelpDialog() {
+    final sizingInfo = context.responsive;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         ),
-        title: const Text('Ayuda y Soporte'),
+        title: Text('Ayuda y Soporte',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 '¿Necesitas ayuda con DocuMente?',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold, 
+                  fontSize: sizingInfo.fontSize.body,
+                ),
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: sizingInfo.spacing),
               _buildHelpItem(
                 title: 'Información de contacto',
                 items: [
@@ -693,16 +900,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   'Email: soporte@documente.com',
                   'Teléfono: +1 (555) 123-4567',
                 ],
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildHelpItem(
                 title: 'Horario de atención',
                 items: [
                   'Lunes a Viernes, 9:00 - 18:00 (UTC-5)',
                   'Sábados: 10:00 - 14:00 (Emergencias)',
                 ],
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildHelpItem(
                 title: 'Preguntas frecuentes',
                 items: [
@@ -711,8 +920,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   '¿Cómo recuperar versiones anteriores de documentos?',
                   '¿Cómo usar el chat asistido por IA?',
                 ],
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildHelpItem(
                 title: 'Soluciones rápidas',
                 items: [
@@ -720,11 +930,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   'Documentos no visibles: Verifique permisos',
                   'Búsqueda semántica no funciona: Verifique la conexión',
                 ],
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 16),
-              const Text(
+              SizedBox(height: sizingInfo.spacing),
+              Text(
                 'Para asistencia inmediata con cuentas corporativas, contacte a su administrador de TI interno.',
-                style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+                style: TextStyle(
+                  fontStyle: FontStyle.italic, 
+                  fontSize: sizingInfo.fontSize.caption,
+                ),
               ),
             ],
           ),
@@ -735,105 +949,144 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: TextButton.styleFrom(
               foregroundColor: const Color(0xFF6B4CE6),
             ),
-            child: const Text('Cerrar'),
+            child: Text('Cerrar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildHelpItem({required String title, required List<String> items}) {
+  Widget _buildHelpItem({
+    required String title, 
+    required List<String> items,
+    required ResponsiveInfo sizingInfo,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        ...items.map((item) => Padding(
-          padding: const EdgeInsets.only(left: 8, bottom: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('• ', style: TextStyle(color: Color(0xFF6B4CE6))),
-              Expanded(child: Text(item, style: const TextStyle(fontSize: 14))),
-            ],
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: sizingInfo.fontSize.body,
           ),
-        )),
+        ),
+        SizedBox(height: sizingInfo.spacing / 2),
+        ...items.map((item) => Padding(
+              padding: EdgeInsets.only(
+                left: sizingInfo.spacing, 
+                bottom: sizingInfo.spacing / 2,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('• ', 
+                    style: TextStyle(
+                      color: Color(0xFF6B4CE6),
+                      fontSize: sizingInfo.fontSize.body,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(item, 
+                      style: TextStyle(fontSize: sizingInfo.fontSize.caption),
+                    ),
+                  ),
+                ],
+              ),
+            )),
       ],
     );
   }
 
   void _showAboutDialog() {
+    final sizingInfo = context.responsive;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         ),
-        title: const Text('Acerca de DocuMente'),
+        title: Text('Acerca de DocuMente',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.description_outlined,
-                size: 64,
-                color: Color(0xFF6B4CE6),
+                size: sizingInfo.fontSize.emptyStateIcon,
+                color: const Color(0xFF6B4CE6),
               ),
-              const SizedBox(height: 16),
-              const Text(
+              SizedBox(height: sizingInfo.spacing),
+              Text(
                 'DocuMente',
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: sizingInfo.fontSize.title,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text('Versión 1.0.0'),
-              const SizedBox(height: 20),
-              const Text(
+              SizedBox(height: sizingInfo.spacing / 2),
+              Text('Versión 1.0.0',
+                style: TextStyle(fontSize: sizingInfo.fontSize.body),
+              ),
+              SizedBox(height: sizingInfo.spacing * 2),
+              Text(
                 'Tu asistente inteligente para la gestión de documentos potenciado por IA',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: sizingInfo.fontSize.body,
+                ),
               ),
-              const SizedBox(height: 20),
+              SizedBox(height: sizingInfo.spacing * 2),
               _buildFeatureItem(
                 icon: Icons.upload_file,
                 title: 'Gestión de Documentos',
-                description: 'Sube, organiza y accede a tus documentos desde cualquier dispositivo con seguridad y eficiencia.',
+                description:
+                    'Sube, organiza y accede a tus documentos desde cualquier dispositivo con seguridad y eficiencia.',
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildFeatureItem(
                 icon: Icons.search,
                 title: 'Búsqueda Semántica',
-                description: 'Encuentra documentos por su contenido, no solo por el título, gracias a nuestro motor de búsqueda semántica avanzado.',
+                description:
+                    'Encuentra documentos por su contenido, no solo por el título, gracias a nuestro motor de búsqueda semántica avanzado.',
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildFeatureItem(
                 icon: Icons.share,
                 title: 'Compartición Inteligente',
-                description: 'Comparte documentos con otros usuarios y establece permisos personalizados de forma sencilla.',
+                description:
+                    'Comparte documentos con otros usuarios y establece permisos personalizados de forma sencilla.',
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildFeatureItem(
                 icon: Icons.chat,
                 title: 'Chat Asistido por IA',
-                description: 'Pregunta a tu asistente virtual sobre el contenido de tus documentos y obtén respuestas precisas.',
+                description:
+                    'Pregunta a tu asistente virtual sobre el contenido de tus documentos y obtén respuestas precisas.',
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: sizingInfo.spacing),
               _buildFeatureItem(
                 icon: Icons.security,
                 title: 'Seguridad Avanzada',
-                description: 'Tus documentos están protegidos con cifrado de extremo a extremo y autenticación segura.',
+                description:
+                    'Tus documentos están protegidos con cifrado de extremo a extremo y autenticación segura.',
+                sizingInfo: sizingInfo,
               ),
-              const SizedBox(height: 16),
-              const Text(
+              SizedBox(height: sizingInfo.spacing),
+              Text(
                 '© 2024 DocuMente Inc. Todos los derechos reservados.',
                 style: TextStyle(
                   color: Colors.grey,
-                  fontSize: 12,
+                  fontSize: sizingInfo.fontSize.caption,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -843,46 +1096,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text('Cerrar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFeatureItem({required IconData icon, required String title, required String description}) {
+  Widget _buildFeatureItem({
+    required IconData icon,
+    required String title,
+    required String description,
+    required ResponsiveInfo sizingInfo,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.all(8),
+          padding: EdgeInsets.all(sizingInfo.iconPadding),
           decoration: BoxDecoration(
             color: const Color(0xFF6B4CE6).withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius / 2),
           ),
           child: Icon(
             icon,
             color: const Color(0xFF6B4CE6),
-            size: 20,
+            size: sizingInfo.fontSize.icon,
           ),
         ),
-        const SizedBox(width: 12),
+        SizedBox(width: sizingInfo.spacing),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  fontSize: 14,
+                  fontSize: sizingInfo.fontSize.body,
                 ),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: sizingInfo.spacing / 4),
               Text(
                 description,
-                style: const TextStyle(
-                  fontSize: 12,
+                style: TextStyle(
+                  fontSize: sizingInfo.fontSize.caption,
                   color: Colors.grey,
                 ),
               ),
@@ -894,18 +1154,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showLogoutDialog() {
+    final sizingInfo = context.responsive;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
         ),
-        title: const Text('Cerrar Sesión'),
-        content: const Text('¿Estás seguro de que quieres cerrar sesión?'),
+        title: Text('Cerrar Sesión',
+          style: TextStyle(fontSize: sizingInfo.fontSize.subtitle),
+        ),
+        content: Text('¿Estás seguro de que quieres cerrar sesión?',
+          style: TextStyle(fontSize: sizingInfo.fontSize.body),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text('Cancelar',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
@@ -919,8 +1186,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(
+                horizontal: sizingInfo.cardPadding,
+                vertical: sizingInfo.spacing,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(sizingInfo.smallBorderRadius),
+              ),
             ),
-            child: const Text('Cerrar Sesión'),
+            child: Text('Cerrar Sesión',
+              style: TextStyle(fontSize: sizingInfo.fontSize.button),
+            ),
           ),
         ],
       ),

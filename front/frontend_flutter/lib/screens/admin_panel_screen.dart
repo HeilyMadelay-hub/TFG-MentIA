@@ -11,13 +11,13 @@ import '../models/user.dart';
 import '../models/document.dart';
 import '../models/chat.dart';
 import '../services/auth_service.dart';
-import '../services/statistics_service.dart';
 import '../services/document_service.dart';
-import '../services/chat_service.dart';
 import '../services/user_service.dart';
-import '../services/admin_service.dart';
+import '../services/admin_panel_service.dart';
 import '../config/api_config.dart';
 import 'chat.dart'; // Importar la pantalla de chat
+import '../utils/email_validator.dart';
+import '../utils/responsive_utils.dart';
 
 class AdminPanelScreen extends StatefulWidget {
   const AdminPanelScreen({super.key});
@@ -36,12 +36,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   bool _isLoadingChats = true;
 
   // Servicios
-  final StatisticsService _statisticsService = StatisticsService();
-  final DocumentService _documentService = DocumentService();
-  final ChatService _chatService = ChatService();
   final UserService _userService = UserService();
-  final AdminService _adminService = AdminService();
-
+  final DocumentService _documentService = DocumentService();
+  
   // Datos reales
   Map<String, int> _statistics = {
     'total_users': 0,
@@ -50,7 +47,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   };
   List<User> _users = [];
   List<Document> _allDocuments = [];
-  List<ChatModel> _allChats = [];
+  List<Chat> _allChats = [];
+  
+  // Datos del dashboard
+  Map<String, dynamic>? _dashboardData;
+  List<dynamic> _recentActivities = [];
 
   @override
   void initState() {
@@ -65,267 +66,227 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     super.dispose();
   }
 
-  void _loadAdminData() async {
-    // Cargar estadísticas
-    _loadStatistics();
-    // Cargar usuarios primero si es admin (necesario para el filtrado)
-    if (AuthService().currentUser?.isAdmin == true) {
-      await _loadUsers();
-    }
-    // Cargar documentos después de usuarios
-    _loadDocuments();
-    // Cargar chats después de usuarios
-    _loadChats();
+  void _loadAdminData() {
+    // Cargar todo desde el nuevo endpoint unificado
+    _loadDashboard();
   }
-
-  Future<void> _loadStatistics() async {
+  
+  Future<void> _loadDashboard() async {
+    if (!mounted) return;
+    
     try {
       setState(() {
         _isLoadingStats = true;
-      });
-
-      // Intentar obtener todos los datos del dashboard de una sola vez
-      final dashboardData = await _statisticsService.getDashboardData();
-
-      if (dashboardData['statistics'] != null) {
-        if (mounted) {
-          setState(() {
-            _statistics = Map<String, int>.from(dashboardData['statistics']);
-            _isLoadingStats = false;
-          });
-        }
-
-        // Si el dashboard incluye documentos y chats recientes, actualizar también
-        if (dashboardData['recent_documents'] != null &&
-            dashboardData['recent_documents'].isNotEmpty) {
-          // Los datos del dashboard son limitados, pero podemos usarlos para la actividad reciente
-          debugPrint(
-              'Dashboard incluye ${dashboardData['recent_documents'].length} documentos recientes');
-        }
-
-        if (dashboardData['recent_chats'] != null &&
-            dashboardData['recent_chats'].isNotEmpty) {
-          debugPrint(
-              'Dashboard incluye ${dashboardData['recent_chats'].length} chats recientes');
-        }
-      }
-    } catch (e) {
-      debugPrint('Error loading dashboard data: $e');
-      // Si falla el dashboard, intentar cargar solo las estadísticas
-      try {
-        final stats = await _statisticsService.getGlobalStatistics();
-        if (mounted) {
-          setState(() {
-            _statistics = stats;
-            _isLoadingStats = false;
-          });
-        }
-      } catch (e2) {
-        debugPrint('Error loading statistics: $e2');
-        if (mounted) {
-          setState(() {
-            _isLoadingStats = false;
-          });
-        }
-      }
-    }
-  }
-
-  Future<void> _loadUsers() async {
-    try {
-      setState(() {
         _isLoadingUsers = true;
-      });
-
-      final users = await _userService.getUsers();
-
-      if (mounted) {
-        setState(() {
-          _users = users;
-          _isLoadingUsers = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading users: $e');
-      if (mounted) {
-        setState(() {
-          _isLoadingUsers = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadDocuments() async {
-    try {
-      setState(() {
         _isLoadingDocs = true;
-      });
-
-      debugPrint('🔄 [ADMIN PANEL] Cargando documentos...');
-      
-      // Para administradores, usar el servicio admin para obtener TODOS los documentos
-      final documents = await _adminService.getAllDocuments();
-      
-      debugPrint('✅ [ADMIN PANEL] Total de documentos recibidos: ${documents.length}');
-      
-      // Mostrar algunos detalles de los documentos recibidos
-      for (var i = 0; i < documents.length && i < 5; i++) {
-        final doc = documents[i];
-        debugPrint('  Doc ${i + 1}: ID=${doc.id}, UploadedBy=${doc.uploadedBy}, Title="${doc.title}"');
-      }
-
-      if (mounted) {
-        setState(() {
-          _allDocuments = documents;
-          _isLoadingDocs = false;
-        });
-      }
-
-      debugPrint('✅ Total de documentos en el sistema: ${documents.length}');
-    } catch (e) {
-      debugPrint('Error loading documents: $e');
-      // Si falla el servicio admin, intentar con el servicio normal
-      try {
-        final documents = await _documentService.getDocuments();
-        if (mounted) {
-          setState(() {
-            _allDocuments = documents;
-            _isLoadingDocs = false;
-          });
-        }
-      } catch (e2) {
-        debugPrint('Error loading documents (fallback): $e2');
-        if (mounted) {
-          setState(() {
-            _isLoadingDocs = false;
-          });
-        }
-      }
-    }
-  }
-
-  Future<void> _loadChats() async {
-    try {
-      setState(() {
         _isLoadingChats = true;
       });
-
-      debugPrint('🔄 [ADMIN PANEL] Cargando chats...');
-      debugPrint('👤 [ADMIN PANEL] Usuario actual: ${AuthService().currentUser?.username} (ID: ${AuthService().currentUser?.id})');
       
-      // Para administradores, usar el servicio admin para obtener TODOS los chats
-      final chats = await _adminService.getAllChats();
+      // Cargar todos los datos del dashboard de una sola vez
+      final dashboard = await AdminPanelService.getDashboard();
       
-      debugPrint('✅ [ADMIN PANEL] Total de chats recibidos: ${chats.length}');
+      if (!mounted) return;
       
-      // Mostrar algunos detalles de los chats recibidos
-      for (var i = 0; i < chats.length && i < 10; i++) {
-        final chat = chats[i];
-        debugPrint('  Chat ${i + 1}: ID=${chat.id}, UserID=${chat.userId}, Title="${chat.title}"');
-      }
-
-      if (mounted) {
-        setState(() {
-          _allChats = chats;
-          _isLoadingChats = false;
-        });
-      }
-
-      debugPrint('✅ Total de chats en el sistema: ${chats.length}');
+      setState(() {
+        _dashboardData = dashboard;
+        
+        // Actualizar estadísticas
+        if (dashboard['statistics'] != null) {
+          _statistics = Map<String, int>.from(dashboard['statistics']);
+        }
+        
+        // Actualizar usuarios
+        if (dashboard['users'] != null) {
+          _users = (dashboard['users'] as List).map<User>((userData) {
+            print('👤 USUARIO DATA: ${json.encode(userData)}');
+            return User(
+              id: userData['id'],
+              username: userData['username'] ?? 'Unknown',
+              email: userData['email'] ?? '',
+              role: userData['is_admin'] == true ? UserRole.admin : UserRole.user,
+              createdAt: AdminPanelService.parseTimestamp(userData['created_at']) ?? DateTime.now(),
+            );
+          }).toList();
+        }
+        
+        // Actualizar documentos
+        if (dashboard['documents'] != null) {
+          _allDocuments = (dashboard['documents'] as List).map<Document>((docData) {
+            print('📄 DOCUMENTO DATA: ${json.encode(docData)}');
+            return Document(
+              id: docData['id'],
+              title: docData['title'] ?? 'Sin título',
+              content: '',
+              originalFilename: docData['title'] ?? 'documento',
+              fileUrl: docData['file_url'],
+              contentType: docData['content_type'] ?? 'application/octet-stream',
+              uploadedBy: docData['owner']?['id'] ?? 0,
+              createdAt: AdminPanelService.parseTimestamp(docData['created_at']) ?? DateTime.now(),
+              status: docData['status'] ?? 'unknown',
+              fileSize: docData['file_size'],
+              isShared: docData['is_shared'] ?? false,
+            );
+          }).toList();
+        }
+        
+        // Actualizar chats
+        if (dashboard['chats'] != null) {
+          _allChats = (dashboard['chats'] as List).map<Chat>((chatData) {
+            // DEBUGGING: Ver TODOS los campos que vienen del backend
+            print('🔍 CHAT DATA COMPLETO: ${json.encode(chatData)}');
+            
+            final createdAt = AdminPanelService.parseTimestamp(chatData['created_at']) ?? DateTime.now();
+            // Buscar el campo correcto: puede ser updated_at, last_message_at, last_activity, etc.
+            final updatedAt = AdminPanelService.parseTimestamp(
+              chatData['updated_at'] ?? 
+              chatData['last_message_at'] ?? 
+              chatData['last_activity'] ?? 
+              chatData['created_at']
+            ) ?? createdAt;
+            
+            print('💙 Chat ${chatData['id']}: created_at=${chatData['created_at']}, updated_at=${chatData['updated_at']}, last_message_at=${chatData['last_message_at']}');
+            
+            return Chat(
+              id: chatData['id'],
+              title: chatData['title'] ?? 'Chat sin título',
+              userId: chatData['owner']?['id']?.toString() ?? '0',
+              createdAt: createdAt,
+              lastMessageAt: updatedAt,
+              messageCount: chatData['message_count'] ?? 0,
+            );
+          }).toList();
+        }
+        
+        // Actualizar actividades recientes
+        if (dashboard['recent_activities'] != null) {
+          _recentActivities = dashboard['recent_activities'];
+          print('📅 ACTIVIDADES RECIENTES:');
+          for (var activity in _recentActivities) {
+            if (activity['type'] == 'chat') {
+              print('  - Chat: "${activity['title']}" | Tiempo: ${activity['formatted_time']} | ID: ${activity['id']} | chat_id: ${activity['chat_id']}');
+            } else if (activity['type'] == 'document') {
+              print('  - Documento: "${activity['title']}" | Tiempo: ${activity['formatted_time']} | ID: ${activity['id']} | document_id: ${activity['document_id']}');
+            }
+          }
+        }
+        
+        _isLoadingStats = false;
+        _isLoadingUsers = false;
+        _isLoadingDocs = false;
+        _isLoadingChats = false;
+      });
+      
+      debugPrint('✅ Dashboard cargado exitosamente');
+      debugPrint('📊 Estadísticas: $_statistics');
+      debugPrint('👥 Usuarios: ${_users.length}');
+      debugPrint('📄 Documentos: ${_allDocuments.length}');
+      debugPrint('💬 Chats: ${_allChats.length}');
+      
     } catch (e) {
-      debugPrint('❌ Error loading chats: $e');
-      if (mounted) {
-        setState(() {
-          _isLoadingChats = false;
-          _allChats = [];
-        });
-      }
+      debugPrint('❌ Error cargando dashboard: $e');
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoadingStats = false;
+        _isLoadingUsers = false;
+        _isLoadingDocs = false;
+        _isLoadingChats = false;
+      });
+      
+      // Mostrar error al usuario
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al cargar el panel: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
+  }
+
+  Future<void> _refreshDashboard() async {
+    await _loadDashboard();
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final isDesktop = screenWidth >= 1200;
+    return ResponsiveBuilder(
+      builder: (context, sizingInfo) {
+        return SafeArea(
+          child: Scaffold(
+            backgroundColor: Colors.grey[50],
+            body: Column(
+              children: [
+                // Header del panel de administración
+                _buildAdminHeader(sizingInfo),
 
-    return SafeArea(
-      child: Scaffold(
-        backgroundColor: Colors.grey[50],
-        body: Column(
-          children: [
-            // Header del panel de administración
-            _buildAdminHeader(),
-
-            // Tabs adaptables
-            Container(
-              color: Colors.white,
-              child: TabBar(
-                controller: _tabController,
-                labelColor: const Color(0xFF6B4CE6),
-                unselectedLabelColor: Colors.grey[600],
-                indicatorColor: const Color(0xFF6B4CE6),
-                isScrollable: !isDesktop, // Scrollable en móviles y tablets
-                labelStyle: TextStyle(
-                  fontSize: isDesktop ? 14 : (isTablet ? 12 : 10),
-                  fontWeight: FontWeight.w500,
+                // Tabs adaptables
+                Container(
+                  color: Colors.white,
+                  child: TabBar(
+                    controller: _tabController,
+                    labelColor: const Color(0xFF6B4CE6),
+                    unselectedLabelColor: Colors.grey[600],
+                    indicatorColor: const Color(0xFF6B4CE6),
+                    isScrollable: !sizingInfo.isDesktop, // Scrollable en móviles y tablets
+                    labelStyle: TextStyle(
+                      fontSize: sizingInfo.fontSize.body,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    tabs: [
+                      Tab(
+                        icon: Icon(Icons.dashboard,
+                            size: sizingInfo.fontSize.icon),
+                        text: sizingInfo.isDesktop
+                            ? 'Dashboard'
+                            : (sizingInfo.screenSize.width > 360 ? 'Dashboard' : 'Inicio'),
+                      ),
+                      Tab(
+                        icon: Icon(Icons.people,
+                            size: sizingInfo.fontSize.icon),
+                        text: 'Usuarios',
+                      ),
+                      Tab(
+                        icon: Icon(Icons.folder,
+                            size: sizingInfo.fontSize.icon),
+                        text: sizingInfo.isDesktop
+                            ? 'Documentos'
+                            : (sizingInfo.screenSize.width > 360 ? 'Documentos' : 'Docs'),
+                      ),
+                      Tab(
+                        icon: Icon(Icons.chat,
+                            size: sizingInfo.fontSize.icon),
+                        text: 'Chats',
+                      ),
+                    ],
+                  ),
                 ),
-                tabs: [
-                  Tab(
-                    icon: Icon(Icons.dashboard,
-                        size: isDesktop ? 24 : (isTablet ? 20 : 18)),
-                    text: isDesktop
-                        ? 'Dashboard'
-                        : (screenWidth > 360 ? 'Dashboard' : 'Inicio'),
-                  ),
-                  Tab(
-                    icon: Icon(Icons.people,
-                        size: isDesktop ? 24 : (isTablet ? 20 : 18)),
-                    text: 'Usuarios',
-                  ),
-                  Tab(
-                    icon: Icon(Icons.folder,
-                        size: isDesktop ? 24 : (isTablet ? 20 : 18)),
-                    text: isDesktop
-                        ? 'Documentos'
-                        : (screenWidth > 360 ? 'Documentos' : 'Docs'),
-                  ),
-                  Tab(
-                    icon: Icon(Icons.chat,
-                        size: isDesktop ? 24 : (isTablet ? 20 : 18)),
-                    text: 'Chats',
-                  ),
-                ],
-              ),
-            ),
 
-            // Contenido de las tabs
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildDashboardTab(),
-                  _buildUsersTab(),
-                  _buildDocumentsTab(),
-                  _buildChatsTab(),
-                ],
-              ),
+                // Contenido de las tabs con contenedor flexible
+                Flexible(
+                  fit: FlexFit.tight,
+                  child: TabBarView(
+                    controller: _tabController,
+                    physics: const NeverScrollableScrollPhysics(), // Prevenir scroll del TabBarView
+                    children: [
+                      _buildDashboardTab(sizingInfo),
+                      _buildUsersTab(sizingInfo),
+                      _buildDocumentsTab(sizingInfo),
+                      _buildChatsTab(sizingInfo),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildAdminHeader() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-
+  Widget _buildAdminHeader(ResponsiveInfo sizingInfo) {
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: isTablet ? 16 : 12,
-        vertical: isTablet ? 12 : 10,
-      ),
+      padding: EdgeInsets.all(sizingInfo.padding),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           colors: [Color(0xFF6B4CE6), Color(0xFF9C27B0)],
@@ -341,37 +302,34 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  screenWidth > 360 ? 'Panel de Administración' : 'Admin Panel',
+                  'Panel de Administración',
                   style: TextStyle(
-                    fontSize: isTablet ? 22 : 18,
+                    fontSize: sizingInfo.fontSize.title,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
                 ),
-                if (screenWidth > 360) ...[
-                  const SizedBox(height: 4),
+                if (sizingInfo.screenSize.width > 360)
                   Text(
-                    'Gestión completa del sistema DocuMente',
+                    'Gestiona usuarios, documentos y chats',
                     style: TextStyle(
-                      fontSize: isTablet ? 14 : 12,
-                      color: Colors.white.withAlpha(230),
+                      fontSize: sizingInfo.fontSize.body,
+                      color: Colors.white.withOpacity(0.8),
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
               ],
             ),
           ),
           Container(
-            padding: EdgeInsets.all(isTablet ? 12 : 8),
+            padding: EdgeInsets.all(sizingInfo.spacing),
             decoration: BoxDecoration(
               color: Colors.white.withAlpha(51),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(sizingInfo.borderRadius),
             ),
             child: Icon(
               Icons.admin_panel_settings,
               color: Colors.white,
-              size: isTablet ? 24 : 20,
+              size: sizingInfo.fontSize.icon,
             ),
           ),
         ],
@@ -379,33 +337,33 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildDashboardTab() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final padding = isTablet ? 24.0 : 16.0;
-
+  Widget _buildDashboardTab(ResponsiveInfo sizingInfo) {
     return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
+      padding: EdgeInsets.only(
+        left: sizingInfo.padding,
+        right: sizingInfo.padding,
+        top: sizingInfo.padding,
+        bottom: sizingInfo.padding + 26, // Agregar padding extra para evitar overflow
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Estadísticas principales
-          _buildStatsGrid(),
+          _buildStatsGrid(sizingInfo),
 
-          SizedBox(height: isTablet ? 32 : 24),
+          SizedBox(height: sizingInfo.spacing * 2),
 
           // Actividad reciente
-          _buildRecentActivity(),
+          _buildRecentActivity(sizingInfo),
+          
+          // Espacio adicional al final para evitar overflow
+          const SizedBox(height: 30),
         ],
       ),
     );
   }
 
-  Widget _buildStatsGrid() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final isDesktop = screenWidth >= 1200;
-    final padding = isTablet ? 24.0 : 16.0;
+  Widget _buildStatsGrid(ResponsiveInfo sizingInfo) {
 
     final stats = [
       {
@@ -436,7 +394,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         Text(
           'Estadísticas del Sistema',
           style: TextStyle(
-            fontSize: isTablet ? 20 : 18,
+            fontSize: sizingInfo.fontSize.title,
             fontWeight: FontWeight.bold,
             color: const Color(0xFF2C3E50),
           ),
@@ -449,15 +407,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           children: stats.map((stat) {
             // Calculate number of columns based on screen size
             final crossAxisCount =
-                isDesktop ? 3 : (isTablet ? 2 : (screenWidth > 360 ? 2 : 1));
+                sizingInfo.isDesktop ? 3 : (sizingInfo.isTablet ? 2 : (sizingInfo.screenSize.width > 360 ? 2 : 1));
             final itemWidth =
-                (screenWidth - (padding * 2) - (16 * (crossAxisCount - 1))) /
+                (sizingInfo.screenSize.width - (sizingInfo.padding * 2) - (16 * (crossAxisCount - 1))) /
                     crossAxisCount;
 
             return SizedBox(
               width: itemWidth,
               child: Container(
-                padding: EdgeInsets.all(isTablet ? 16 : 12),
+                padding: EdgeInsets.all(sizingInfo.cardPadding),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
@@ -482,14 +440,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                       child: Icon(
                         stat['icon'] as IconData,
                         color: stat['color'] as Color,
-                        size: isTablet ? 24 : 20,
+                        size: sizingInfo.fontSize.icon,
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       stat['value'] as String,
                       style: TextStyle(
-                        fontSize: isTablet ? 22 : 18,
+                        fontSize: sizingInfo.fontSize.subtitle,
                         fontWeight: FontWeight.bold,
                         color: const Color(0xFF2C3E50),
                       ),
@@ -497,7 +455,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                     Text(
                       stat['title'] as String,
                       style: TextStyle(
-                        fontSize: isTablet ? 12 : 11,
+                        fontSize: sizingInfo.fontSize.caption,
                         color: Colors.grey[600],
                       ),
                       textAlign: TextAlign.center,
@@ -514,62 +472,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildRecentActivity() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
+  Widget _buildRecentActivity(ResponsiveInfo sizingInfo) {
 
-    // Generar actividades dinámicamente basadas en los datos reales
-    final activities = <Map<String, dynamic>>[];
-
-    // Filtrar documentos excluyendo los de Ivan
-    final userDocuments = _allDocuments.where((doc) {
-      try {
-        final owner = _users.firstWhere((u) => u.id == doc.uploadedBy);
-        return owner.username.toLowerCase() != 'ivan';
-      } catch (e) {
-        return true;
-      }
-    }).toList();
-
-    for (int i = 0; i < userDocuments.length && i < 2; i++) {
-      final doc = userDocuments[i];
-      activities.add({
-        'action': 'Documento subido',
-        'user': doc.title,
-        'time': _formatDateTime(doc.createdAt),
-        'icon': Icons.upload_file,
-      });
-    }
-
-    // Filtrar chats excluyendo los de Ivan
-    final userChats = _allChats.where((chat) {
-      try {
-        final user = _users.firstWhere((u) => u.id == chat.userId);
-        return user.username.toLowerCase() != 'ivan';
-      } catch (e) {
-        return true;
-      }
-    }).toList();
-
-    for (int i = 0; i < userChats.length && i < 2; i++) {
-      final chat = userChats[i];
-      activities.add({
-        'action': 'Chat actualizado',
-        'user': chat.title,
-        'time': _formatDateTime(chat.updatedAt),
-        'icon': Icons.chat,
-      });
-    }
-
-    // Si no hay actividades, mostrar mensaje por defecto
-    if (activities.isEmpty) {
-      activities.add({
+    // Usar las actividades recientes del dashboard
+    final activities = _recentActivities.isEmpty ? 
+      [{
         'action': 'Sin actividad reciente',
         'user': 'El sistema está esperando nueva actividad',
-        'time': 'Ahora',
-        'icon': Icons.hourglass_empty,
-      });
-    }
+        'formatted_time': 'Ahora',
+        'type': 'empty',
+      }] : 
+      _recentActivities;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -581,7 +494,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               child: Text(
                 'Actividad Reciente',
                 style: TextStyle(
-                  fontSize: isTablet ? 20 : 18,
+                  fontSize: sizingInfo.fontSize.title,
                   fontWeight: FontWeight.bold,
                   color: const Color(0xFF2C3E50),
                 ),
@@ -593,6 +506,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         ),
         const SizedBox(height: 16),
         Container(
+          // Limitar la altura máxima del contenedor para evitar overflow
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.4, // 40% de la altura de pantalla
+          ),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -606,7 +523,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           ),
           child: ListView.builder(
             shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
+            physics: activities.length > 5 ? const AlwaysScrollableScrollPhysics() : const NeverScrollableScrollPhysics(),
             itemCount: activities.length,
             itemBuilder: (context, index) {
               final activity = activities[index];
@@ -621,23 +538,27 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(
-                        activity['icon'] as IconData,
+                        _getActivityIcon(activity['type'] ?? 'unknown'),
                         color: const Color(0xFF6B4CE6),
                         size: 18,
                       ),
                     ),
                     title: Text(
-                      activity['action'] as String,
-                      style: TextStyle(fontSize: isTablet ? 14 : 13),
+                      activity['action'] ?? 'Actividad',
+                      style: TextStyle(fontSize: sizingInfo.fontSize.body),
                     ),
                     subtitle: Text(
-                      activity['user'] as String,
-                      style: TextStyle(fontSize: isTablet ? 12 : 11),
+                      activity['user'] ?? activity['title'] ?? 'Usuario',
+                      style: TextStyle(fontSize: sizingInfo.fontSize.caption),
                     ),
                     trailing: Text(
-                      activity['time'] as String,
+                      activity['formatted_time'] ?? 'Desconocido',
                       style: TextStyle(color: Colors.grey[600], fontSize: 11),
                     ),
+                    onTap: () {
+                      // DEBUG: Ver qué contiene cada actividad
+                      print('🎯 ACTIVIDAD COMPLETA: ${json.encode(activity)}');
+                    },
                   ),
                   if (index < activities.length - 1)
                     const Divider(height: 1, indent: 16, endIndent: 16),
@@ -650,29 +571,19 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildUsersTab() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final padding = isTablet ? 24.0 : 16.0;
+  Widget _buildUsersTab(ResponsiveInfo sizingInfo) {
 
-    // Filtrar usuarios para excluir a Ivan
-    final filteredUsers = _users.where((user) {
-      // No mostrar a Ivan
-      if (user.username.toLowerCase() == 'ivan') {
-        return false;
-      }
-      return true;
-    }).toList();
+    // Los usuarios ya vienen filtrados desde el backend (sin el admin actual)
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
+      padding: EdgeInsets.all(sizingInfo.padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Gestión de Usuarios',
             style: TextStyle(
-              fontSize: isTablet ? 20 : 18,
+              fontSize: sizingInfo.fontSize.title,
               fontWeight: FontWeight.bold,
               color: const Color(0xFF2C3E50),
             ),
@@ -686,7 +597,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 color: Color(0xFF6B4CE6),
               ),
             )
-          else if (filteredUsers.isEmpty)
+          else if (_users.isEmpty)
             Container(
               padding: EdgeInsets.all(32),
               alignment: Alignment.center,
@@ -714,82 +625,78 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               child: ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                itemCount: filteredUsers.length,
+                itemCount: _users.length,
                 separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
-                  final user = filteredUsers[index];
+                  final user = _users[index];
+                // 🔧 CORRECCIÓN: Buscar por ID en lugar de por índice
+                String formattedTime = 'Fecha desconocida';
+                
+                // Buscar los datos del usuario por ID en el dashboard data del backend
+                if (_dashboardData != null && _dashboardData!['users'] != null) {
+                  // 🎯 BUSCAR POR ID EN LUGAR DE ÍNDICE
+                  final userData = (_dashboardData!['users'] as List).firstWhere(
+                    (userData) => userData['id'] == user.id,
+                    orElse: () => null,
+                  );
+                  
+                  if (userData != null) {
+                    // ✅ USAR EL TIEMPO YA FORMATEADO DEL BACKEND
+                    if (userData['formatted_created'] != null && userData['formatted_created'].toString().isNotEmpty) {
+                      formattedTime = userData['formatted_created'];
+                      print('✅ Usando tiempo del backend para ${user.username} (ID: ${user.id}): $formattedTime');
+                    } else {
+                      // Fallback: calcular en el frontend solo si no viene del backend
+                      formattedTime = _formatDateTime(user.createdAt);
+                      print('⚠️ Sin formatted_created del backend para ${user.username}, calculando en frontend: $formattedTime');
+                    }
+                  } else {
+                    // Usuario no encontrado en los datos del backend
+                    formattedTime = _formatDateTime(user.createdAt);
+                    print('❌ Usuario ${user.username} (ID: ${user.id}) no encontrado en datos del backend');
+                  }
+                } else {
+                  // Fallback: calcular en el frontend
+                  formattedTime = _formatDateTime(user.createdAt);
+                  print('❌ Sin datos del backend, calculando en frontend para ${user.username}: $formattedTime');
+                }
+                
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: user.isAdmin
-                          ? const Color(0xFF6B4CE6).withValues(alpha: 0.1)
-                          : Colors.grey[200],
-                      child: Text(
-                        user.username.substring(0, 1).toUpperCase(),
-                        style: TextStyle(
-                          color: user.isAdmin
-                              ? const Color(0xFF6B4CE6)
-                              : Colors.grey[700],
-                          fontWeight: FontWeight.bold,
-                        ),
+                      backgroundColor: const Color(0xFF6B4CE6).withOpacity(0.2),
+                      child: Icon(
+                        Icons.person,
+                        color: const Color(0xFF6B4CE6),
                       ),
                     ),
-                    title: Text(user.username),
+                    title: Text(
+                      user.username,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(user.email),
                         Text(
-                          user.email,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: user.isAdmin
-                                    ? const Color(0xFF6B4CE6)
-                                        .withValues(alpha: 0.1)
-                                    : Colors.grey[200],
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                user.isAdmin ? 'Administrador' : 'Usuario',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w500,
-                                  color: user.isAdmin
-                                      ? const Color(0xFF6B4CE6)
-                                      : Colors.grey[700],
-                                ),
-                              ),
-                            ),
-                            if (screenWidth > 360)
-                              Text(
-                                'Registro: ${_formatDate(user.createdAt)}',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                          ],
+                          'Cuenta creada: $formattedTime',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
                         ),
                       ],
                     ),
                     trailing: PopupMenuButton<String>(
-                      onSelected: (action) => _handleUserAction(action, user),
+                      icon: const Icon(Icons.more_vert),
                       itemBuilder: (context) => [
                         const PopupMenuItem(
                           value: 'edit',
                           child: Row(
                             children: [
-                              Icon(Icons.edit, size: 18),
-                              SizedBox(width: 12),
+                              Icon(Icons.edit),
+                              SizedBox(width: 8),
                               Text('Editar'),
                             ],
                           ),
@@ -798,20 +705,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                           value: 'delete',
                           child: Row(
                             children: [
-                              Icon(
-                                Icons.delete,
-                                size: 18,
-                                color: Colors.red,
-                              ),
-                              SizedBox(width: 12),
-                              Text(
-                                'Eliminar',
-                                style: TextStyle(color: Colors.red),
-                              ),
+                              Icon(Icons.delete, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text('Eliminar'),
                             ],
                           ),
                         ),
                       ],
+                      onSelected: (action) => _handleUserAction(action, user),
                     ),
                   );
                 },
@@ -822,42 +723,19 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildDocumentsTab() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final padding = isTablet ? 24.0 : 16.0;
+  Widget _buildDocumentsTab(ResponsiveInfo sizingInfo) {
 
-    // Filtrar documentos para excluir los de Ivan
-    final filteredDocuments = _allDocuments.where((document) {
-      // Obtener el propietario del documento
-      final ownerId = document.uploadedBy;
-      
-      // Buscar si el propietario es Ivan
-      try {
-        final owner = _users.firstWhere((u) => u.id == ownerId);
-        if (owner.username.toLowerCase() == 'ivan') {
-          debugPrint('  ❌ Excluyendo doc ID=${document.id} (pertenece a Ivan)');
-          return false;
-        }
-      } catch (e) {
-        // Si no se encuentra el usuario, incluir el documento
-      }
-      
-      return true;
-    }).toList();
-    
-    debugPrint('👤 [ADMIN PANEL - DOCS] Excluyendo documentos de Ivan');
-    debugPrint('📁 [ADMIN PANEL - DOCS] Total documentos después de filtrar: ${filteredDocuments.length}');
+    // Los documentos ya vienen filtrados desde el backend (sin los del admin actual)
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
+      padding: EdgeInsets.all(sizingInfo.padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Documentos de Usuarios',
             style: TextStyle(
-              fontSize: isTablet ? 20 : 18,
+              fontSize: sizingInfo.fontSize.title,
               fontWeight: FontWeight.bold,
               color: const Color(0xFF2C3E50),
             ),
@@ -871,12 +749,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 color: Color(0xFF6B4CE6),
               ),
             )
-          else if (filteredDocuments.isEmpty)
+          else if (_allDocuments.isEmpty)
             Container(
               padding: EdgeInsets.all(32),
               alignment: Alignment.center,
               child: Text(
-                'No hay documentos de otros usuarios (excluyendo Ivan)',
+                'No hay documentos de otros usuarios',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 16,
@@ -899,10 +777,51 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               child: ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                itemCount: filteredDocuments.length,
+                itemCount: _allDocuments.length,
                 separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
-                  final document = filteredDocuments[index];
+                  final document = _allDocuments[index];
+                  String uploadTime = 'Sin fecha';
+                  String username = 'Usuario desconocido';
+                  
+                  print('\n🔍 === PROCESANDO DOCUMENTO $index: "${document.title}" ===');
+                  
+                  // Obtener información del documento del dashboard
+                  if (_dashboardData != null && _dashboardData!['documents'] != null && 
+                      index < _dashboardData!['documents'].length) {
+                    final docData = _dashboardData!['documents'][index];
+                    username = docData['owner']?['username'] ?? 'Usuario desconocido';
+                    
+                    // Usar el tiempo formateado del backend si está disponible
+                    if (docData['formatted_created'] != null) {
+                      uploadTime = docData['formatted_created'];
+                      print('✅ Usando formatted_created del backend: $uploadTime');
+                    } else {
+                      // Buscar en actividades recientes
+                      final matchingActivity = _recentActivities.firstWhere(
+                        (act) => act['type'] == 'document' && 
+                                (act['title'] == document.title || 
+                                 (act['document_id'] != null && act['document_id'] == document.id)),
+                        orElse: () => {},
+                      );
+                      
+                      if (matchingActivity.isNotEmpty && matchingActivity['formatted_time'] != null) {
+                        uploadTime = matchingActivity['formatted_time'];
+                        print('🎯 Encontrada actividad reciente para "${document.title}": $uploadTime');
+                      } else if (matchingActivity.isNotEmpty && matchingActivity['timestamp'] != null) {
+                        uploadTime = AdminPanelService.formatRelativeTime(matchingActivity['timestamp']);
+                        print('🕒 Formateando timestamp de actividad: $uploadTime');
+                      } else {
+                        // Fallback: usar created_at del documento
+                        uploadTime = _formatDateTime(document.createdAt);
+                        print('⚠️ Sin actividad reciente, usando created_at: ${document.createdAt} -> $uploadTime');
+                      }
+                    }
+                  } else {
+                    uploadTime = _formatDateTime(document.createdAt);
+                    print('❌ No hay datos del dashboard para este documento');
+                  }
+                  
                   return ListTile(
                     leading: Container(
                       width: 40,
@@ -922,49 +841,18 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(username, style: TextStyle(fontSize: 12)),
                         Text(
-                          document.fileName,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            Text(
-                              'Propietario: ${_getUsernameById(document.uploadedBy)}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                            if (document.isShared)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF4CAF50)
-                                      .withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  'Compartido',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Color(0xFF4CAF50),
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                          ],
+                          uploadTime,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[600],
+                          ),
                         ),
                       ],
                     ),
                     trailing: PopupMenuButton<String>(
-                      onSelected: (action) =>
-                          _handleDocumentAction(action, document),
+                      onSelected: (action) => _handleDocumentAction(action, document),
                       itemBuilder: (context) => [
                         const PopupMenuItem(
                           value: 'view',
@@ -972,7 +860,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                             children: [
                               Icon(Icons.visibility, size: 18),
                               SizedBox(width: 12),
-                              Text('Ver'),
+                              Text('Ver documento'),
                             ],
                           ),
                         ),
@@ -980,12 +868,9 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                           value: 'delete',
                           child: Row(
                             children: [
-                              Icon(Icons.delete, size: 18, color: Colors.red),
+                              Icon(Icons.delete, color: Colors.red, size: 18),
                               SizedBox(width: 12),
-                              Text(
-                                'Eliminar',
-                                style: TextStyle(color: Colors.red),
-                              ),
+                              Text('Eliminar'),
                             ],
                           ),
                         ),
@@ -1000,42 +885,19 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildChatsTab() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth >= 600;
-    final padding = isTablet ? 24.0 : 16.0;
+  Widget _buildChatsTab(ResponsiveInfo sizingInfo) {
 
-    // Filtrar chats para excluir los de Ivan
-    final filteredChats = _allChats.where((chat) {
-      // Obtener el ID del usuario del chat
-      final userId = chat.userId;
-      
-      // Buscar si el usuario es Ivan
-      try {
-        final user = _users.firstWhere((u) => u.id == userId);
-        if (user.username.toLowerCase() == 'ivan') {
-          debugPrint('  ❌ Excluyendo chat ID=${chat.id} (pertenece a Ivan)');
-          return false;
-        }
-      } catch (e) {
-        // Si no se encuentra el usuario, incluir el chat
-      }
-      
-      return true;
-    }).toList();
-    
-    debugPrint('👤 [ADMIN PANEL - CHATS] Excluyendo chats de Ivan');
-    debugPrint('📁 [ADMIN PANEL - CHATS] Total chats después de filtrar: ${filteredChats.length}');
+    // Los chats ya vienen filtrados desde el backend (sin los del admin actual)
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(padding),
+      padding: EdgeInsets.all(sizingInfo.padding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Chats de Usuarios',
             style: TextStyle(
-              fontSize: isTablet ? 20 : 18,
+              fontSize: sizingInfo.fontSize.title,
               fontWeight: FontWeight.bold,
               color: const Color(0xFF2C3E50),
             ),
@@ -1049,12 +911,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 color: Color(0xFF6B4CE6),
               ),
             )
-          else if (filteredChats.isEmpty)
+          else if (_allChats.isEmpty)
             Container(
               padding: EdgeInsets.all(32),
               alignment: Alignment.center,
               child: Text(
-                'No hay chats de otros usuarios (excluyendo Ivan)',
+                'No hay chats de otros usuarios',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 16,
@@ -1077,29 +939,87 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               child: ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                itemCount: filteredChats.length,
+                itemCount: _allChats.length,
                 separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
-                  final chat = filteredChats[index];
-                  // Obtener usuario de forma segura
-                  User? user;
-                  try {
-                    if (_users.isNotEmpty) {
-                      user = _users.firstWhere((u) => u.id == chat.userId);
-                    }
-                  } catch (e) {
-                    user = null;
+                  print('\n🔍 === PROCESANDO CHAT $index ===');
+                  final chat = _allChats[index];
+                  
+                  // Obtener el nombre del usuario desde el dashboard data
+                  String username = 'Usuario desconocido';
+                  String lastActivity = 'Sin actividad reciente';
+                  
+                  if (_dashboardData != null && _dashboardData!['chats'] != null && 
+                      index < _dashboardData!['chats'].length) {
+                    username = _dashboardData!['chats'][index]['owner']?['username'] ?? 'Usuario desconocido';
                   }
-
-                  // Si no se encuentra el usuario, usar valores por defecto
-                  final displayUser = user ??
-                      User(
-                          id: 0,
-                          username: 'Usuario desconocido',
-                          email: '',
-                          role: UserRole.user,
-                          createdAt: DateTime.now());
-
+                  
+                  // SOLUCIÓN TEMPORAL: El backend no envía updated_at correctamente
+                  // Buscar información adicional del chat en el dashboard
+                  if (_dashboardData != null && _dashboardData!['chats'] != null && 
+                      index < _dashboardData!['chats'].length) {
+                    final chatData = _dashboardData!['chats'][index];
+                    
+                    // Intentar obtener el timestamp de la última actividad
+                    final lastMessageTime = chatData['last_message_at'] ?? 
+                                          chatData['last_activity'] ?? 
+                                          chatData['updated_at'];
+                    
+                    if (lastMessageTime != null) {
+                      // Si tenemos un timestamp de última actividad, usarlo
+                      lastActivity = AdminPanelService.formatRelativeTime(lastMessageTime);
+                      print('✅ Chat "${chat.title}" usando last_message_at: $lastMessageTime -> $lastActivity');
+                    } else {
+                      // Si no, buscar en actividades recientes
+                      // Primero intentar por ID (más confiable)
+                      var matchingActivity = _recentActivities.firstWhere(
+                        (act) => act['type'] == 'chat' && 
+                                (act['chat_id'] == chat.id || act['id'] == chat.id),
+                        orElse: () => {},
+                      );
+                      
+                      // Si no encontramos por ID, buscar por título exacto
+                      if (matchingActivity.isEmpty) {
+                        matchingActivity = _recentActivities.firstWhere(
+                          (act) => act['type'] == 'chat' && act['title'] == chat.title,
+                          orElse: () => {},
+                        );
+                      }
+                      
+                      // Último intento: buscar por coincidencia parcial de título
+                      if (matchingActivity.isEmpty) {
+                        matchingActivity = _recentActivities.firstWhere(
+                          (act) => act['type'] == 'chat' && 
+                                  act['title'] != null &&
+                                  (act['title'].contains(chat.title) || chat.title.contains(act['title'])),
+                          orElse: () => {},
+                        );
+                      }
+                      
+                      if (matchingActivity.isNotEmpty) {
+                        // Preferir formatted_time del backend, sino formatear el timestamp
+                        if (matchingActivity['formatted_time'] != null) {
+                          lastActivity = matchingActivity['formatted_time'];
+                          print('🎯 Encontrada actividad con tiempo formateado para "${chat.title}": $lastActivity');
+                        } else if (matchingActivity['timestamp'] != null) {
+                          // Si hay timestamp pero no formatted_time, formatearlo nosotros
+                          lastActivity = AdminPanelService.formatRelativeTime(matchingActivity['timestamp']);
+                          print('🕒 Formateando timestamp de actividad para "${chat.title}": ${matchingActivity['timestamp']} -> $lastActivity');
+                        } else {
+                          // Sin datos de tiempo en la actividad
+                          lastActivity = _formatDateTime(chat.createdAt);
+                          print('⚠️ Actividad sin timestamp para "${chat.title}"');
+                        }
+                      } else {
+                        // Fallback: usar created_at
+                        lastActivity = _formatDateTime(chat.createdAt);
+                        print('⚠️ Sin actividad reciente para "${chat.title}", usando created_at');
+                      }
+                    }
+                  } else {
+                    lastActivity = _formatDateTime(chat.createdAt);
+                  }
+                  
                   return ListTile(
                     leading: const CircleAvatar(
                       backgroundColor: Color(0xFF6B4CE6),
@@ -1109,12 +1029,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Usuario: ${displayUser.username}'),
+                        Text('Usuario: $username'),
                         const SizedBox(height: 4),
                         Text(
-                          'Última actividad: ${_formatDateTime(chat.updatedAt)}',
-                          style:
-                              TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          'Última actividad: $lastActivity',
+                          style: TextStyle(
+                            fontSize: 12, 
+                            color: Colors.grey[600]
+                          ),
                         ),
                       ],
                     ),
@@ -1180,19 +1102,29 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     if (date == null) {
       return 'Sin fecha';
     }
-
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (difference.inDays == 0) {
-      if (difference.inHours == 0) {
-        return 'Hace ${difference.inMinutes} minutos';
-      }
-      return 'Hace ${difference.inHours} horas';
-    } else if (difference.inDays == 1) {
-      return 'Ayer';
-    } else {
+    
+    try {
+      // NO convertir a UTC aquí, dejar que formatRelativeTime maneje la conversión
+      return AdminPanelService.formatRelativeTime(date.toIso8601String());
+    } catch (e) {
+      print('❌ Error formateando fecha: $e');
+      // Fallback: mostrar fecha simple
       return '${date.day}/${date.month}/${date.year}';
+    }
+  }
+  
+  IconData _getActivityIcon(String type) {
+    switch (type) {
+      case 'document':
+        return Icons.upload_file;
+      case 'chat':
+        return Icons.chat;
+      case 'user':
+        return Icons.person_add;
+      case 'empty':
+        return Icons.hourglass_empty;
+      default:
+        return Icons.notifications;
     }
   }
 
@@ -1258,15 +1190,15 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   void _showEditUserDialog(User user) {
     final usernameController = TextEditingController(text: user.username);
     final emailController = TextEditingController(text: user.email);
-    final screenWidth = MediaQuery.of(context).size.width;
 
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        child: Container(
-          constraints: BoxConstraints(
-            maxWidth: screenWidth > 600 ? 500 : double.infinity,
-          ),
+      builder: (context) => ResponsiveBuilder(
+        builder: (context, sizingInfo) => Dialog(
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: sizingInfo.isTablet ? 500 : double.infinity,
+            ),
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1307,6 +1239,29 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                   const SizedBox(width: 8),
                   ElevatedButton(
                     onPressed: () async {
+                      // Validar formato de email
+                      if (!EmailValidator.isValidFormat(emailController.text)) {
+                        showDialog(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              title: Text('Error de Validación'),
+                              content: Text(
+                                  'El email ingresado no tiene un formato válido. Por favor, verifique e intente nuevamente.'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.of(context).pop();
+                                  },
+                                  child: Text('Aceptar'),
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                        return;
+                      }
+
                       await _updateUser(
                         user,
                         usernameController.text,
@@ -1328,7 +1283,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 
   Future<void> _updateUser(
@@ -1340,6 +1296,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         email: newEmail,
       );
 
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Usuario actualizado exitosamente'),
@@ -1347,9 +1305,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         ),
       );
 
-      // Recargar la lista de usuarios
-      _loadUsers();
+      // Recargar el dashboard completo
+      _refreshDashboard();
     } catch (e) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error al actualizar: ${e.toString()}'),
@@ -1395,6 +1355,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     try {
       await _userService.deleteUser(user.id);
 
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Usuario ${user.username} eliminado'),
@@ -1402,9 +1364,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         ),
       );
 
-      // Recargar la lista de usuarios
-      _loadUsers();
+      // Recargar el dashboard completo
+      _refreshDashboard();
     } catch (e) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error al eliminar: ${e.toString()}'),
@@ -1459,8 +1423,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               _buildInfoRow('Tamaño:', _formatFileSize(document.fileSize!)),
             _buildInfoRow('Estado:', _getDocumentStatus(document)),
             const SizedBox(height: 16),
-            if (document.fileUrl != null && document.fileUrl!.isNotEmpty) ...
-            [
+            if (document.fileUrl != null && document.fileUrl!.isNotEmpty) ...[
               const Divider(),
               const SizedBox(height: 8),
               const Text(
@@ -1498,8 +1461,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                     ),
                 ],
               ),
-            ] else ...
-            [
+            ] else ...[
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -1509,7 +1471,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.warning, color: Colors.orange.shade700, size: 20),
+                    Icon(Icons.warning,
+                        color: Colors.orange.shade700, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -1560,7 +1523,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   String _formatFileSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (bytes < 1024 * 1024 * 1024)
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
@@ -1718,17 +1682,36 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  void _deleteDocument(Document document) {
-    setState(() {
-      _allDocuments.removeWhere((d) => d.id == document.id);
-    });
+  void _deleteDocument(Document document) async {
+    try {
+      // Llamar al servicio para eliminar el documento del backend
+      await _documentService.deleteDocument(document.id);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Documento ${document.title} eliminado'),
-        backgroundColor: Colors.red,
-      ),
-    );
+      if (!mounted) return;
+
+      setState(() {
+        _allDocuments.removeWhere((d) => d.id == document.id);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Documento ${document.title} eliminado'),
+          backgroundColor: Colors.red,
+        ),
+      );
+
+      // Recargar el dashboard completo
+      _refreshDashboard();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al eliminar documento: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   String _getDocumentStatus(Document document) {
@@ -1750,7 +1733,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     if (document.status == 'processing') {
       return 'El documento aún se está procesando. Por favor, espera unos momentos...';
     } else if (document.status == 'error') {
-      return document.statusMessage ?? 'Ocurrió un error al procesar el documento';
+      return document.statusMessage ??
+          'Ocurrió un error al procesar el documento';
     } else if (document.status == 'pending') {
       return 'El documento está en cola para ser procesado';
     } else if (document.fileUrl == null || document.fileUrl!.isEmpty) {
@@ -1759,7 +1743,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return 'El archivo no está disponible para visualización';
   }
 
-  void _handleChatAction(String action, ChatModel chat) {
+  void _handleChatAction(String action, Chat chat) {
     switch (action) {
       case 'view':
         // Navegar a la pantalla de chat en modo lectura para administradores

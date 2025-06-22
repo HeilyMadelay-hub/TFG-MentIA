@@ -1,38 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart'; // Agregar esta importación
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http_parser/http_parser.dart';
+import 'api_client.dart';
 import '../config/api_config.dart';
 import '../models/document.dart';
 
 class DocumentService {
-  static const String _tokenKey = 'auth_token';
-
-  // Obtener el token de autenticación
-  Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
-  }
-
-  // Configurar headers con autenticación
-  Future<Map<String, String>> _getHeaders({bool isMultipart = false}) async {
-    final token = await _getToken();
-    if (token == null) {
-      throw Exception('No authentication token found');
-    }
-
-    if (isMultipart) {
-      return {
-        'Authorization': 'Bearer $token',
-      };
-    }
-
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-    };
-  }
+  final ApiClient _apiClient = apiClient;
 
   // Subir un documento
   Future<Document> uploadDocument({
@@ -41,32 +16,25 @@ class DocumentService {
     required String contentType,
   }) async {
     try {
-      final headers = await _getHeaders(isMultipart: true);
-      final uri = Uri.parse(ApiConfig.uploadDocument);
-
-      var request = http.MultipartRequest('POST', uri);
-      request.headers.addAll(headers);
-
-      // Agregar el archivo
-      request.files.add(await http.MultipartFile.fromPath(
+      final file = await http.MultipartFile.fromPath(
         'file',
         filePath,
         contentType: MediaType.parse(contentType),
-      ));
+      );
 
-      // Agregar campos del formulario
-      request.fields['title'] = title;
+      final response = await _apiClient.multipart(
+        ApiConfig.uploadDocument,
+        'POST',
+        fields: {'title': title},
+        files: [file],
+      );
 
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonData = json.decode(response.body);
-        return Document.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to upload document: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return Document.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al subir documento: ${e.message}');
+      }
       throw Exception('Error uploading document: $e');
     }
   }
@@ -79,33 +47,26 @@ class DocumentService {
     required String contentType,
   }) async {
     try {
-      final headers = await _getHeaders(isMultipart: true);
-      final uri = Uri.parse(ApiConfig.uploadDocument);
-
-      var request = http.MultipartRequest('POST', uri);
-      request.headers.addAll(headers);
-
-      // Agregar el archivo desde bytes
-      request.files.add(http.MultipartFile.fromBytes(
+      final file = http.MultipartFile.fromBytes(
         'file',
         fileBytes,
         filename: filename,
         contentType: MediaType.parse(contentType),
-      ));
+      );
 
-      // Agregar campos del formulario
-      request.fields['title'] = title;
+      final response = await _apiClient.multipart(
+        ApiConfig.uploadDocument,
+        'POST',
+        fields: {'title': title},
+        files: [file],
+      );
 
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonData = json.decode(response.body);
-        return Document.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to upload document: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return Document.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al subir documento: ${e.message}');
+      }
       throw Exception('Error uploading document: $e');
     }
   }
@@ -134,54 +95,31 @@ class DocumentService {
   }) async {
     try {
       debugPrint('🔄 Cargando documentos...');
-      final headers = await _getHeaders();
-      debugPrint('📤 Headers obtenidos');
       
-      // Construir la URL con parámetros de paginación y ordenamiento
-      String url = ApiConfig.listDocuments;
+      // Construir parámetros de paginación
       final params = <String, String>{};
-      
       params['skip'] = skip.toString();
       params['limit'] = limit.toString();
       if (sortBy != null) params['sort_by'] = sortBy;
       if (order != null) params['order'] = order;
       
-      if (params.isNotEmpty) {
-        url = '$url?${params.entries.map((e) => '${e.key}=${e.value}').join('&')}';
-      }
-      
-      debugPrint('🌐 URL: $url');
-      final uri = Uri.parse(url);
-
-      final response = await http.get(uri, headers: headers).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          debugPrint('❌ Timeout al cargar documentos');
-          throw Exception('Timeout al cargar documentos');
-        },
+      final response = await _apiClient.get(
+        ApiConfig.listDocuments,
+        queryParams: params,
       );
 
       debugPrint('📥 Response status: ${response.statusCode}');
       
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        debugPrint('✅ Documentos cargados: ${jsonList.length}');
-        return jsonList.map((json) => Document.fromJson(json)).toList();
-      } else if (response.statusCode == 401) {
-        debugPrint('❌ Error de autenticación');
-        throw Exception('No autenticado o token inválido');
-      } else {
-        debugPrint('❌ Error del servidor: ${response.statusCode}');
-        debugPrint('📥 Response body: ${response.body}');
-        throw Exception('Failed to load documents: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      debugPrint('✅ Documentos cargados: ${jsonList.length}');
+      return jsonList.map((json) => Document.fromJson(json)).toList();
     } catch (e) {
       debugPrint('❌ Error completo: $e');
-      // Re-lanzar errores de autenticación para que sean manejados arriba
-      if (e.toString().contains('No authentication token') || 
-          e.toString().contains('401') ||
-          e.toString().contains('No autenticado')) {
-        throw Exception('No autenticado o token inválido');
+      if (e is ApiException) {
+        if (e.statusCode == 401 || e.errorCode == 'SESSION_EXPIRED') {
+          throw Exception('No autenticado o token inválido');
+        }
+        throw Exception('Error al cargar documentos: ${e.message}');
       }
       throw Exception('Error loading documents: $e');
     }
@@ -190,18 +128,13 @@ class DocumentService {
   // Obtener un documento específico
   Future<Document> getDocument(int documentId) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.documentById(documentId));
-
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return Document.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to get document: ${response.body}');
-      }
+      final response = await _apiClient.get(ApiConfig.documentById(documentId));
+      final jsonData = json.decode(response.body);
+      return Document.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al obtener documento: ${e.message}');
+      }
       throw Exception('Error getting document: $e');
     }
   }
@@ -215,28 +148,23 @@ class DocumentService {
     List<String>? tags,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.updateDocument(documentId));
-
       Map<String, dynamic> body = {};
       if (title != null) body['title'] = title;
       if (content != null) body['content'] = content;
       if (contentType != null) body['content_type'] = contentType;
       if (tags != null) body['tags'] = tags;
 
-      final response = await http.put(
-        uri,
-        headers: headers,
-        body: json.encode(body),
+      final response = await _apiClient.put(
+        ApiConfig.updateDocument(documentId),
+        body: body,
       );
 
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return Document.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to update document: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return Document.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al actualizar documento: ${e.message}');
+      }
       throw Exception('Error updating document: $e');
     }
   }
@@ -244,67 +172,39 @@ class DocumentService {
   // Eliminar un documento
   Future<bool> deleteDocument(int documentId) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.deleteDocument(documentId));
-
-      final response = await http.delete(uri, headers: headers);
-
-      if (response.statusCode == 204) {
-        return true;
-      } else {
-        throw Exception('Failed to delete document: ${response.body}');
-      }
+      await _apiClient.delete(ApiConfig.deleteDocument(documentId));
+      return true;
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al eliminar documento: ${e.message}');
+      }
       throw Exception('Error deleting document: $e');
     }
   }
 
   // Compartir documento con usuarios
-  Future<void> shareDocument({
+  Future<Map<String, dynamic>> shareDocument({
     required int documentId,
     required List<int> userIds,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.shareDocument(documentId));
-
-      final response = await http.post(
-        uri,
-        headers: headers,
-        body: json.encode({'user_ids': userIds}),
+      final response = await _apiClient.post(
+        ApiConfig.shareDocument(documentId),
+        body: {'user_ids': userIds},
       );
-
-      if (response.statusCode == 200) {
-        return;
-      } else {
-        // Log de respuesta para debug
-        debugPrint('Error response status: ${response.statusCode}');
-        debugPrint('Error response body: ${response.body}');
-        
-        // Intentar decodificar el error del backend
-        try {
-          final error = json.decode(response.body);
-          final detail = error['detail'] ?? 'Error al compartir documento';
-          
-          // Si el mensaje contiene información sobre IDs inválidos, incluirlo completo
-          if (detail.toString().contains('Los siguientes IDs de usuario no existen')) {
-            throw Exception('detail: $detail');
-          } else {
-            throw Exception(detail);
-          }
-        } catch (e) {
-          // Si ya es una Exception, re-lanzarla
-          if (e is Exception) {
-            rethrow;
-          }
-          // Si no se puede decodificar, lanzar error genérico
-          throw Exception('Error al compartir documento: ${response.statusCode}');
-        }
-      }
+      
+      // Devolver la respuesta completa del backend
+      return json.decode(response.body);
     } catch (e) {
-      // Si ya es una Exception, re-lanzarla
-      if (e is Exception) {
-        rethrow;
+      if (e is ApiException) {
+        debugPrint('Error response: ${e.message}');
+        
+        // Si el mensaje contiene información sobre IDs inválidos, incluirlo completo
+        if (e.message.contains('Los siguientes IDs de usuario no existen')) {
+          throw Exception('detail: ${e.message}');
+        } else {
+          throw Exception(e.message);
+        }
       }
       throw Exception('Error al compartir documento: $e');
     }
@@ -314,22 +214,20 @@ class DocumentService {
   Future<List<Document>> getSharedDocuments(
       {int skip = 0, int limit = 100}) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.getPaginatedEndpoint(
+      final response = await _apiClient.get(
         ApiConfig.sharedDocuments,
-        skip: skip,
-        limit: limit,
-      ));
+        queryParams: {
+          'skip': skip.toString(),
+          'limit': limit.toString(),
+        },
+      );
 
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.map((json) => Document.fromJson(json)).toList();
-      } else {
-        throw Exception('Failed to load shared documents: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      return jsonList.map((json) => Document.fromJson(json)).toList();
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al cargar documentos compartidos: ${e.message}');
+      }
       throw Exception('Error loading shared documents: $e');
     }
   }
@@ -337,26 +235,24 @@ class DocumentService {
   // Obtener documentos compartidos conmigo
   Future<List<Document>> getSharedWithMe({int skip = 0, int limit = 100}) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.getPaginatedEndpoint(
+      final response = await _apiClient.get(
         ApiConfig.sharedWithMe,
-        skip: skip,
-        limit: limit,
-      ));
+        queryParams: {
+          'skip': skip.toString(),
+          'limit': limit.toString(),
+        },
+      );
 
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.map((doc) {
-          var document = Document.fromJson(doc);
-          document.isShared = true; // Marcar como compartido
-          return document;
-        }).toList();
-      } else {
-        throw Exception('Failed to load shared documents: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      return jsonList.map((doc) {
+        var document = Document.fromJson(doc);
+        document.isShared = true; // Marcar como compartido
+        return document;
+      }).toList();
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al cargar documentos compartidos: ${e.message}');
+      }
       throw Exception('Error loading shared documents: $e');
     }
   }
@@ -364,17 +260,12 @@ class DocumentService {
   // Obtener el estado de procesamiento de un documento
   Future<Map<String, dynamic>> getDocumentStatus(int documentId) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.documentStatus(documentId));
-
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      } else {
-        throw Exception('Failed to get document status: ${response.body}');
-      }
+      final response = await _apiClient.get(ApiConfig.documentStatus(documentId));
+      return json.decode(response.body);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al obtener estado del documento: ${e.message}');
+      }
       throw Exception('Error getting document status: $e');
     }
   }
@@ -382,18 +273,13 @@ class DocumentService {
   // Listar usuarios con acceso a un documento
   Future<List<Map<String, dynamic>>> getDocumentUsers(int documentId) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.documentUsers(documentId));
-
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to get document users: ${response.body}');
-      }
+      final response = await _apiClient.get(ApiConfig.documentUsers(documentId));
+      final List<dynamic> jsonList = json.decode(response.body);
+      return jsonList.cast<Map<String, dynamic>>();
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al obtener usuarios del documento: ${e.message}');
+      }
       throw Exception('Error getting document users: $e');
     }
   }
@@ -404,17 +290,12 @@ class DocumentService {
     required int userId,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.removeUserAccess(documentId, userId));
-
-      final response = await http.delete(uri, headers: headers);
-
-      if (response.statusCode == 204) {
-        return true;
-      } else {
-        throw Exception('Failed to remove user access: ${response.body}');
-      }
+      await _apiClient.delete(ApiConfig.removeUserAccess(documentId, userId));
+      return true;
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al eliminar acceso: ${e.message}');
+      }
       throw Exception('Error removing user access: $e');
     }
   }
@@ -422,12 +303,8 @@ class DocumentService {
   // Verificar acceso a un documento
   Future<bool> hasAccessToDocument(int documentId) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.checkDocumentAccess(documentId));
-
-      final response = await http.get(uri, headers: headers);
-
-      return response.statusCode == 200;
+      await _apiClient.get(ApiConfig.checkDocumentAccess(documentId));
+      return true;
     } catch (e) {
       debugPrint('Error verificando acceso: $e');
       return false;
@@ -440,18 +317,10 @@ class DocumentService {
     required int userId,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.removeUserAccess(documentId, userId));
-
-      final response = await http.delete(uri, headers: headers);
-
-      if (response.statusCode != 200 && response.statusCode != 204) {
-        final error = json.decode(response.body);
-        throw Exception(error['detail'] ?? 'Error al revocar acceso');
-      }
+      await _apiClient.delete(ApiConfig.removeUserAccess(documentId, userId));
     } catch (e) {
-      if (e is Exception) {
-        rethrow;
+      if (e is ApiException) {
+        throw Exception(e.message);
       }
       throw Exception('Error al revocar acceso: $e');
     }
@@ -463,21 +332,16 @@ class DocumentService {
     int nResults = 5,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final uri = Uri.parse(ApiConfig.searchDocumentsUrl(
-        query: query,
-        nResults: nResults,
-      ));
+      final response = await _apiClient.get(
+        ApiConfig.searchDocumentsUrl(query: query, nResults: nResults),
+      );
 
-      final response = await http.get(uri, headers: headers);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to search documents: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      return jsonList.cast<Map<String, dynamic>>();
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al buscar documentos: ${e.message}');
+      }
       throw Exception('Error searching documents: $e');
     }
   }

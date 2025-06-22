@@ -2,7 +2,7 @@
 Endpoints de administración para documentos.
 Solo accesibles por usuarios administradores.
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, status, Query
 from typing import List, Optional, Dict, Any
 import logging
 
@@ -10,6 +10,7 @@ from src.models.schemas.document import DocumentResponse
 from src.models.domain import User
 from src.services.document_service import DocumentService
 from src.api.dependencies import get_current_user, get_document_service
+from src.core.exceptions import ForbiddenException, DatabaseException
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +20,7 @@ router = APIRouter(prefix="/admin/documents", tags=["admin", "documents"])
 def verify_admin(current_user: User = Depends(get_current_user)) -> User:
     """Verifica que el usuario actual sea administrador"""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo los administradores pueden acceder a este recurso"
-        )
+        raise ForbiddenException("Solo los administradores pueden acceder a este recurso")
     return current_user
 
 @router.get("/all", response_model=List[DocumentResponse])
@@ -64,12 +62,11 @@ async def get_all_documents(
         
         return all_documents
         
+    except (ForbiddenException,):
+        raise  # Re-lanzar excepciones ya manejadas
     except Exception as e:
         logger.error(f"Error al obtener documentos para admin: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al obtener documentos: {str(e)}"
-        )
+        raise DatabaseException(f"Error al obtener documentos: {str(e)}")
 
 @router.get("/stats", response_model=Dict[str, Any])
 async def get_documents_stats(
@@ -100,10 +97,7 @@ async def get_documents_stats(
         
     except Exception as e:
         logger.error(f"Error al obtener estadísticas de documentos: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al obtener estadísticas: {str(e)}"
-        )
+        raise DatabaseException(f"Error al obtener estadísticas: {str(e)}")
 
 @router.get("/user/{user_id}", response_model=List[DocumentResponse])
 async def get_user_documents(

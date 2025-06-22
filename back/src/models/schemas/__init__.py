@@ -35,6 +35,23 @@ from .chat import (
     ChatMessage
 )
 
+# WebSocket schemas
+from .chat_websocket import (
+    MessageType,
+    StreamStatus,
+    BaseWebSocketMessage,
+    UserMessageData,
+    ConnectionSuccessMessage,
+    ErrorMessage,
+    StreamStartMessage,
+    StreamChunkMessage,
+    StreamEndMessage,
+    StatusUpdateMessage,
+    MessageFactory,
+    WebSocketConnectionInfo,
+    WebSocketStats
+)
+
 __all__ = [
     # User
     "UserBase",
@@ -63,5 +80,20 @@ __all__ = [
     "MessageBase",
     "MessageCreate",
     "MessageResponse",
-    "ChatMessage"
+    "ChatMessage",
+    
+    # WebSocket
+    "MessageType",
+    "StreamStatus",
+    "BaseWebSocketMessage",
+    "UserMessageData",
+    "ConnectionSuccessMessage",
+    "ErrorMessage",
+    "StreamStartMessage",
+    "StreamChunkMessage",
+    "StreamEndMessage",
+    "StatusUpdateMessage",
+    "MessageFactory",
+    "WebSocketConnectionInfo",
+    "WebSocketStats"
 ]

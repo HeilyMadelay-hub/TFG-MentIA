@@ -23,6 +23,18 @@ from src.utils.ai_connector import get_openai_connector
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.user_repository import UserRepository
 from src.models.domain import Document
+from src.services.local_storage_service import local_storage
+from src.services.signed_url_service import signed_url_service
+
+# Importar excepciones personalizadas
+from src.core.exceptions import (
+    DocumentNotFoundException,
+    UserNotFoundException,
+    ValidationException,
+    ForbiddenException,
+    DatabaseException,
+    ExternalServiceException
+)
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +59,44 @@ class DocumentService:
         self.user_repo = UserRepository()  # Añadir el repositorio de usuarios
         self.collection_name = "documents"  # Colección por defecto en ChromaDB
 
+    def _generate_signed_url_for_document(self, document: Document, expiration_hours: int = 24) -> Optional[str]:
+        """
+        Genera una URL firmada para un documento si tiene archivo asociado.
+        
+        Args:
+            document: Documento para el cual generar la URL
+            expiration_hours: Horas de validez de la URL
+            
+        Returns:
+            str: URL firmada o None si no hay archivo
+        """
+        try:
+            if not document or not hasattr(document, 'file_url') or not document.file_url:
+                return None
+            
+            # Extraer la ruta del archivo de la URL original
+            # La URL tiene formato: http://localhost:2690/api/files/{user_id}/{filename}
+            parts = document.file_url.split('/api/files/')
+            if len(parts) > 1:
+                file_path = parts[1]  # user_id/filename
+            else:
+                # Si no tiene el formato esperado, intentar construir la ruta
+                file_path = f"{document.uploaded_by}/{document.id}_{document.original_filename}"
+            
+            # Generar URL firmada
+            signed_url = signed_url_service.generate_signed_url(
+                document_id=document.id,
+                user_id=document.uploaded_by,
+                file_path=file_path,
+                expiration_hours=expiration_hours
+            )
+            
+            return signed_url
+            
+        except Exception as e:
+            logger.error(f"Error generando URL firmada para documento {document.id}: {str(e)}")
+            return document.file_url  # Fallback a URL original
+    
     def extract_text_from_pdf(self, pdf_content: bytes) -> str:
         """
         Extrae texto de un archivo PDF desde bytes.
@@ -56,6 +106,10 @@ class DocumentService:
             
         Returns:
             str: Texto extraído del PDF
+            
+        Raises:
+            ExternalServiceException: Si no hay librerías de PDF disponibles
+            ValidationException: Si no se puede extraer texto del PDF
         """
         try:
             import PyPDF2
@@ -103,11 +157,14 @@ class DocumentService:
                 
             except ImportError:
                 logger.error("No hay librerías de PDF disponibles. Instale PyPDF2 o pdfplumber")
-                raise Exception("No se puede procesar archivos PDF. Falta librería PyPDF2 o pdfplumber")
+                raise ExternalServiceException(
+                    "PDF Processing",
+                    "No se puede procesar archivos PDF. Falta librería PyPDF2 o pdfplumber"
+                )
                 
         except Exception as e:
             logger.error(f"Error al extraer texto del PDF: {str(e)}")
-            raise Exception(f"Error al procesar PDF: {str(e)}")
+            raise ValidationException(f"Error al procesar PDF: {str(e)}")
 
     def _clean_extracted_text(self, text: str) -> str:
         """
@@ -123,46 +180,55 @@ class DocumentService:
         
         return text
 
-    def store_original_file(self, file_content: bytes, filename: str, document_id: int) -> str:
+    def store_original_file(self, file_content: bytes, filename: str, document_id: int, user_id: int) -> str:
         """
-        Almacena el archivo original en Supabase Storage y retorna la URL.
+        Almacena el archivo original localmente y retorna la URL.
         
         Args:
             file_content: Contenido del archivo en bytes
             filename: Nombre original del archivo
             document_id: ID del documento
+            user_id: ID del usuario que sube el archivo
             
         Returns:
             str: URL del archivo almacenado
+            
+        Raises:
+            ExternalServiceException: Si no se puede almacenar el archivo
         """
         try:
-            supabase = get_supabase_client()
+            logger.info(f"Almacenando archivo localmente: {filename}")
             
-            # Generar un nombre único para el archivo
-            file_extension = os.path.splitext(filename)[1]
-            unique_filename = f"documents/{document_id}_{uuid.uuid4()}{file_extension}"
-            
-            # Subir archivo a Supabase Storage
-            response = supabase.storage.from_("documents").upload(
-                unique_filename, 
-                file_content,
-                file_options={"content-type": self._get_content_type_from_extension(file_extension)}
+            # Usar el servicio de almacenamiento local
+            relative_path = local_storage.store_file(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id
             )
             
-            if response.error:
-                logger.error(f"Error al subir archivo a Storage: {response.error}")
-                raise Exception(f"Error al almacenar archivo: {response.error}")
+            if not relative_path:
+                raise ExternalServiceException(
+                    "Local Storage",
+                    "No se pudo almacenar el archivo localmente"
+                )
             
-            # Obtener URL pública del archivo
-            file_url = supabase.storage.from_("documents").get_public_url(unique_filename)
+            # Generar URL para acceder al archivo
+            base_url = os.getenv("API_BASE_URL", "http://localhost:2690")
+            # Cambiar formato de URL para usar el nuevo endpoint
+            file_url = f"{base_url}/api/files/{user_id}/{os.path.basename(relative_path)}"
             
-            logger.info(f"Archivo almacenado exitosamente: {file_url}")
+            logger.info(f"✅ Archivo almacenado exitosamente: {file_url}")
             return file_url
             
+        except ExternalServiceException:
+            raise
         except Exception as e:
-            logger.error(f"Error al almacenar archivo: {str(e)}")
-            # En caso de error, retornar None para que el documento se cree sin URL
-            return None
+            logger.error(f"❌ Error al almacenar archivo: {str(e)}")
+            self.update_document_status(document_id, "error", f"Error al almacenar archivo: {str(e)}")
+            raise ExternalServiceException(
+                "Local Storage",
+                f"Error al almacenar archivo: {str(e)}"
+            )
 
     def _get_content_type_from_extension(self, extension: str) -> str:
         """
@@ -208,6 +274,11 @@ class DocumentService:
         """
         Crea un nuevo documento y lo almacena tanto en la base de datos relacional
         como en la base de datos vectorial (ChromaDB).
+        
+        Raises:
+            ValidationException: Si los datos no son válidos
+            ExternalServiceException: Si hay error con servicios externos
+            DatabaseException: Si hay error de base de datos
         """
         supabase_document_id = None
         try:
@@ -235,14 +306,14 @@ class DocumentService:
                         
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Error al descargar archivo desde {file_url}: {str(e)}")
-                    raise Exception(f"No se pudo descargar el archivo: {str(e)}")
-                except Exception as e:
-                    logger.error(f"Error al procesar archivo descargado: {str(e)}")
-                    raise
+                    raise ExternalServiceException(
+                        "File Download",
+                        f"No se pudo descargar el archivo: {str(e)}"
+                    )
             
             # Validar que tenemos contenido para procesar
             if not content or content.strip() == "":
-                raise ValueError("No hay contenido para procesar.")
+                raise ValidationException("No hay contenido para procesar")
             
             # 1. Procesar el documento
             chunks = self._split_text_into_chunks(content)
@@ -304,8 +375,8 @@ class DocumentService:
                         # Registrar el error de limpieza pero propagar el error original
                         logger.error(f"Error al eliminar documento {supabase_document_id} durante recuperación: {cleanup_error}")
                 
-                # Propagar el error original de ChromaDB
-                raise Exception(f"Error al guardar en ChromaDB: {chroma_error}")
+                # Propagar el error como ExternalServiceException
+                raise ExternalServiceException("ChromaDB", f"Error al guardar en ChromaDB: {chroma_error}")
             
             # 6. Actualizar el documento con la referencia a ChromaDB
             if document_ids:
@@ -317,6 +388,9 @@ class DocumentService:
             logger.info(f"Documento creado con éxito: {document.id}")
             return document
             
+        except (ValidationException, ExternalServiceException, DatabaseException):
+            # Re-lanzar excepciones conocidas
+            raise
         except Exception as e:
             # Si ocurre un error en cualquier punto después de crear el documento en Supabase
             if supabase_document_id and "Error al guardar en ChromaDB" not in str(e):
@@ -327,9 +401,9 @@ class DocumentService:
                     logger.error(f"Error al limpiar documento {supabase_document_id} después de error: {cleanup_error}")
             
             logger.error(f"Error al crear documento: {str(e)}")
-            raise
+            raise DatabaseException("Error al crear documento", original_error=e)
         
-    def get_document(self, document_id: int) -> Optional[Document]:
+    def get_document(self, document_id: int) -> Document:
         """
         Obtiene un documento por su ID desde la base de datos relacional.
         
@@ -337,22 +411,31 @@ class DocumentService:
             document_id: ID del documento a recuperar
             
         Returns:
-            Document o None si no se encuentra
+            Document: El documento recuperado
+            
+        Raises:
+            DocumentNotFoundException: Si el documento no existe
+            DatabaseException: Si hay error de base de datos
         """
-        try:
-            return self.document_repo.get(document_id)
-        except Exception as e:
-            logger.error(f"Error al obtener documento {document_id}: {str(e)}")
-            raise
+        # El repository ahora lanza DocumentNotFoundException si no existe
+        # No necesitamos verificar None
+        return self.document_repo.get(document_id)
     
     def update_document(self, document_id: int, title: Optional[str] = None, 
                         content: Optional[str] = None, tags: Optional[List[str]] = None,
                         file_url: Optional[str] = None) -> Document:
+        """
+        Actualiza un documento existente.
+        
+        Raises:
+            DocumentNotFoundException: Si el documento no existe
+            ValidationException: Si los datos no son válidos
+            ExternalServiceException: Si hay error con ChromaDB
+            DatabaseException: Si hay error de base de datos
+        """
         try:
-            # 1. Obtener el documento actual
+            # 1. Obtener el documento actual (lanza DocumentNotFoundException si no existe)
             document = self.document_repo.get(document_id)
-            if not document:
-                raise ValueError(f"Documento con ID {document_id} no encontrado")
             
             # 2. Actualizar los campos necesarios
             if title is not None:
@@ -393,7 +476,7 @@ class DocumentService:
             
             if not update_success:
                 logger.error(f"Fallo al actualizar documento {document_id} en la base de datos")
-                raise Exception(f"No se pudo actualizar el documento {document_id}")
+                raise DatabaseException(f"No se pudo actualizar el documento {document_id}")
             
             # 4. Si cambió el contenido, actualizar ChromaDB
             if content_changed and content:
@@ -418,10 +501,12 @@ class DocumentService:
                         logger.debug(f"   Chunk {i}: {chunk[:100]}...")
                 except Exception as chunk_error:
                     logger.error(f"❌ Error generando chunks: {str(chunk_error)}")
-                    raise
+                    raise ValidationException(f"Error generando chunks: {str(chunk_error)}")
+                
                 if not chunks:
                     logger.warning(f"No se generaron chunks para el documento {document_id}")
                     return document
+                
                 document_chunks = []
                 document_ids = []
                 metadatas = []
@@ -451,7 +536,8 @@ class DocumentService:
                     logger.info(f"✅ Documento {document_id} indexado en ChromaDB con {len(document_ids)} chunks")
                 except Exception as chromadb_error:
                     logger.error(f"❌ Error al indexar en ChromaDB: {str(chromadb_error)}")
-                    raise
+                    raise ExternalServiceException("ChromaDB", f"Error al indexar en ChromaDB: {str(chromadb_error)}")
+                
                 if document_ids:
                     document.chromadb_id = str(document_id)
                     update_success = self.document_repo.update(document)
@@ -463,9 +549,11 @@ class DocumentService:
             logger.info(f"Documento actualizado con éxito: {document.id}")
             return document
             
+        except (DocumentNotFoundException, ValidationException, ExternalServiceException):
+            raise
         except Exception as e:
             logger.error(f"Error al actualizar documento {document_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al actualizar documento {document_id}", original_error=e)
 
     def verify_document_indexed(self, document_id: int) -> bool:
         """
@@ -564,26 +652,40 @@ class DocumentService:
     def list_user_documents(self, user_id: int, skip: int = 0, limit: int = 100, sort_by: str = 'created_at', order: str = 'desc') -> list:
         """
         Devuelve la lista de documentos subidos por un usuario.
+        
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.list_by_user(user_id, limit=limit, offset=skip, sort_by=sort_by, order=order)
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al listar documentos del usuario {user_id}: {str(e)}")
-            return []
+            raise DatabaseException(f"Error al listar documentos del usuario {user_id}", original_error=e)
 
     def get_shared_documents(self, user_id: int, skip: int = 0, limit: int = 100) -> list:
         """
         Devuelve la lista de documentos compartidos con el usuario.
+        
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.get_shared_documents(user_id, limit=limit, offset=skip)
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al listar documentos compartidos para el usuario {user_id}: {str(e)}")
-            return []
+            raise DatabaseException(f"Error al listar documentos compartidos del usuario {user_id}", original_error=e)
 
     def create_document_placeholder(self, uploaded_by: int, title: str, content_type: str, file_size: int = None, filename: str = None, file_url: str = None) -> Document:
         """
         Crea un documento placeholder (sin contenido, solo metadatos iniciales).
+        
+        Raises:
+            ValidationException: Si los datos no son válidos
+            DatabaseException: Si hay error de base de datos
         """
         try:
             document = Document(
@@ -602,9 +704,11 @@ class DocumentService:
             document_id = self.document_repo.create_placeholder(document)
             document.id = document_id
             return document
+        except (ValidationException, DatabaseException):
+            raise
         except Exception as e:
             logger.error(f"Error al crear documento placeholder: {str(e)}")
-            raise
+            raise DatabaseException("Error al crear documento placeholder", original_error=e)
 
     def get_rag_response(self, query: str, user_id: int = None, n_results: int = 5, document_ids: Optional[List[int]] = None) -> dict:
         """
@@ -735,12 +839,14 @@ class DocumentService:
             document_id: ID del documento a actualizar.
             status: Nuevo estado del documento.
             message: Mensaje opcional para describir el estado.
+            
+        Raises:
+            DocumentNotFoundException: Si el documento no existe
+            DatabaseException: Si hay error de base de datos
         """
         try:
-            # Obtener el documento actual
+            # Obtener el documento actual (lanza DocumentNotFoundException si no existe)
             document = self.document_repo.get(document_id)
-            if not document:
-                raise Exception(f"Documento con ID {document_id} no encontrado")
 
             # Actualizar el estado y el mensaje
             document.status = status
@@ -751,16 +857,21 @@ class DocumentService:
             # Guardar los cambios en la base de datos
             update_success = self.document_repo.update_status(document)
             if not update_success:
-                raise Exception(f"No se pudo actualizar el estado del documento {document_id}")
+                raise DatabaseException(f"No se pudo actualizar el estado del documento {document_id}")
 
             logger.info(f"Estado del documento {document_id} actualizado a '{status}' con mensaje: '{message}'")
+        except (DocumentNotFoundException, DatabaseException):
+            raise
         except Exception as e:
             logger.error(f"Error al actualizar el estado del documento {document_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al actualizar estado del documento {document_id}", original_error=e)
 
     def search_documents(self, query: str, user_id: int, n_results: int = 5, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Busca documentos por contenido usando búsqueda semántica.
+        
+        Raises:
+            ExternalServiceException: Si hay error con ChromaDB
         """
         try:
             # Construir filtro para el usuario
@@ -795,11 +906,11 @@ class DocumentService:
             
         except Exception as e:
             logger.error(f"Error en búsqueda de documentos: {str(e)}")
-            return []
+            raise ExternalServiceException("ChromaDB", f"Error en búsqueda: {str(e)}")
 
-    def share_document(self, document_id: int, user_ids: List[int], requester_id: int) -> bool:
+    def share_document(self, document_id: int, user_ids: List[int], requester_id: int) -> Dict[str, Any]:
         """
-        Comparte un documento con usuarios específicos.
+        Comparte un documento con usuarios específicos, validando duplicados.
         
         Args:
             document_id: ID del documento a compartir
@@ -807,10 +918,13 @@ class DocumentService:
             requester_id: ID del usuario que solicita compartir
             
         Returns:
-            bool: True si se compartió exitosamente
+            Dict con información sobre el resultado de la operación
             
         Raises:
-            ValueError: Si no tiene permisos o el documento no existe
+            DocumentNotFoundException: Si el documento no existe
+            ForbiddenException: Si no tiene permisos
+            ValidationException: Si hay errores de validación
+            DatabaseException: Si hay error de base de datos
         """
         try:
             logger.info(f"=== DocumentService.share_document ===")
@@ -818,11 +932,8 @@ class DocumentService:
             logger.info(f"User IDs to share: {user_ids}")
             logger.info(f"Requester ID: {requester_id}")
             
-            # Verificar que el documento existe
+            # get() ahora lanza DocumentNotFoundException si no existe
             document = self.document_repo.get(document_id)
-            if not document:
-                logger.error(f"Documento {document_id} no encontrado")
-                raise ValueError(f"Documento con ID {document_id} no encontrado")
             
             logger.info(f"Documento encontrado: {document.title}, owner: {document.uploaded_by}")
             
@@ -834,54 +945,82 @@ class DocumentService:
             
             if not is_owner and not is_admin:
                 logger.error(f"Usuario {requester_id} no tiene permisos para compartir documento {document_id}")
-                raise ValueError("No tienes permisos para compartir este documento")
+                raise ForbiddenException("No tienes permisos para compartir este documento")
             
             # Compartir el documento
             logger.info(f"Llamando a repository.share_document_with_users...")
-            success = self.document_repo.share_document_with_users(document_id, user_ids)
+            result = self.document_repo.share_document_with_users(document_id, user_ids)
             
-            if success:
-                logger.info(f"✅ Documento {document_id} compartido exitosamente con {len(user_ids)} usuarios")
-            else:
-                logger.error(f"❌ Fallo al compartir documento {document_id}")
+            logger.info(f"✅ Resultado de compartir: {result}")
+            
+            # Validar resultado
+            if result["total_new_shares"] == 0 and result["total_already_shared"] == 0:
+                raise DatabaseException("No se pudo compartir el documento con ningún usuario")
                 
-            return success
+            return result
             
-        except ValueError as ve:
-            # Re-lanzar errores de validación
-            logger.error(f"ValueError en share_document: {str(ve)}")
+        except (DocumentNotFoundException, ForbiddenException, ValidationException, DatabaseException):
+            # Re-lanzar excepciones conocidas
             raise
         except Exception as e:
             logger.error(f"Error inesperado al compartir documento: {str(e)}")
-            logger.error(f"Tipo de error: {type(e).__name__}")
-            import traceback
-            logger.error(traceback.format_exc())
-            raise Exception(f"Error al compartir documento: {str(e)}")
+            raise DatabaseException(f"Error al compartir documento: {str(e)}", original_error=e)
+    
+    def get_existing_shares(self, document_id: int, user_ids: List[int]) -> List[Dict[str, Any]]:
+        """
+        Obtiene información sobre usuarios que ya tienen acceso al documento.
+        
+        Args:
+            document_id: ID del documento
+            user_ids: Lista de IDs de usuarios a verificar
+            
+        Returns:
+            List[Dict]: Lista con información de usuarios que ya tienen acceso
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
+        """
+        try:
+            return self.document_repo.get_existing_shares(document_id, user_ids)
+        except Exception as e:
+            logger.error(f"Error al obtener shares existentes: {str(e)}")
+            raise DatabaseException(f"Error al verificar accesos existentes", original_error=e)
 
     def link_users_to_document(self, document_id: int, user_ids: List[int], requester_id: int) -> bool:
         """
         Vincula usuarios a un documento.
         """
-        return self.share_document(document_id, user_ids, requester_id)
+        result = self.share_document(document_id, user_ids, requester_id)
+        return result["total_new_shares"] > 0 or result["total_already_shared"] > 0
 
     def check_user_access(self, document_id: int, user_id: int) -> bool:
         """
         Verifica si un usuario tiene acceso a un documento.
+        
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.check_user_access(document_id, user_id)
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al verificar acceso: {str(e)}")
-            return False
+            raise DatabaseException("Error al verificar acceso al documento", original_error=e)
 
     def list_document_users(self, document_id: int, requester_id: int) -> List[Dict[str, Any]]:
         """
         Lista usuarios con acceso a un documento.
+        
+        Raises:
+            ForbiddenException: Si no tiene permisos
+            DocumentNotFoundException: Si el documento no existe
+            DatabaseException: Si hay error de base de datos
         """
         try:
             # Verificar permisos
             if not self.check_user_access(document_id, requester_id):
-                raise ValueError("No tienes permisos para ver los usuarios de este documento")
+                raise ForbiddenException("No tienes permisos para ver los usuarios de este documento")
             
             user_ids = self.document_repo.list_document_users(document_id)
             users = []
@@ -897,43 +1036,53 @@ class DocumentService:
             
             return users
             
+        except (ForbiddenException, DocumentNotFoundException):
+            raise
         except Exception as e:
             logger.error(f"Error al listar usuarios del documento: {str(e)}")
-            raise
+            raise DatabaseException("Error al listar usuarios del documento", original_error=e)
 
     def remove_user_access(self, document_id: int, user_id: int, requester_id: int) -> bool:
         """
         Elimina el acceso de un usuario a un documento.
+        
+        Raises:
+            DocumentNotFoundException: Si el documento no existe
+            ForbiddenException: Si no tiene permisos
+            DatabaseException: Si hay error de base de datos
         """
         try:
-            # Verificar que el documento existe
+            # Verificar que el documento existe (lanza DocumentNotFoundException si no existe)
             document = self.document_repo.get(document_id)
-            if not document:
-                raise ValueError(f"Documento con ID {document_id} no encontrado")
             
             # Verificar permisos (propietario)
             if document.uploaded_by != requester_id:
-                raise ValueError("Solo el propietario puede eliminar acceso a este documento")
+                raise ForbiddenException("Solo el propietario puede eliminar acceso a este documento")
             
             return self.document_repo.remove_user_access(document_id, user_id)
             
+        except (DocumentNotFoundException, ForbiddenException, DatabaseException):
+            raise
         except Exception as e:
             logger.error(f"Error al eliminar acceso: {str(e)}")
-            raise
+            raise DatabaseException("Error al eliminar acceso del usuario", original_error=e)
 
     def delete_document(self, document_id: int, requester_id: int) -> bool:
         """
         Elimina un documento del sistema.
+        
+        Raises:
+            DocumentNotFoundException: Si el documento no existe
+            ForbiddenException: Si no tiene permisos
+            DatabaseException: Si hay error de base de datos
         """
         try:
-            # Verificar que el documento existe
+            # Verificar que el documento existe (lanza DocumentNotFoundException si no existe)
             document = self.document_repo.get(document_id)
-            if not document:
-                raise ValueError(f"Documento con ID {document_id} no encontrado")
             
             # Verificar permisos (propietario o admin)
             if document.uploaded_by != requester_id and not self.is_admin_user(requester_id):
-                raise ValueError("No tienes permisos para eliminar este documento")
+                raise ForbiddenException("No tienes permisos para eliminar este documento")
             
             # Eliminar chunks de ChromaDB
             self._delete_document_chunks(document_id)
@@ -941,9 +1090,11 @@ class DocumentService:
             # Eliminar de la base de datos
             return self.document_repo.delete(document_id)
             
+        except (DocumentNotFoundException, ForbiddenException, DatabaseException):
+            raise
         except Exception as e:
             logger.error(f"Error al eliminar documento: {str(e)}")
-            raise
+            raise DatabaseException("Error al eliminar documento", original_error=e)
 
     def is_admin_user(self, user_id: int) -> bool:
         """
@@ -986,6 +1137,9 @@ class DocumentService:
             
         Returns:
             List[Document]: Lista de todos los documentos del sistema
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             logger.info(f"[ADMIN] Obteniendo todos los documentos del sistema (skip={skip}, limit={limit})")
@@ -996,9 +1150,11 @@ class DocumentService:
             logger.info(f"[ADMIN] Total de documentos encontrados: {len(documents)}")
             
             return documents
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al obtener todos los documentos para admin: {str(e)}")
-            return []
+            raise DatabaseException("Error al obtener todos los documentos", original_error=e)
     
     async def user_has_access(self, document_id: int, user_id: int) -> bool:
         """
@@ -1030,13 +1186,18 @@ class DocumentService:
             
         Returns:
             List[Document]: Lista de todos los documentos
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             # Usar el método correcto del repository
             return self.document_repo.list_all_documents(limit=limit, offset=skip)
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al listar todos los documentos: {str(e)}")
-            return []
+            raise DatabaseException("Error al listar todos los documentos", original_error=e)
     
     def count_all_documents(self) -> int:
         """
@@ -1044,12 +1205,17 @@ class DocumentService:
         
         Returns:
             int: Número total de documentos
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.count_all()
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al contar documentos: {str(e)}")
-            return 0
+            raise DatabaseException("Error al contar documentos", original_error=e)
     
     def get_documents_count_by_user(self) -> Dict[str, int]:
         """
@@ -1057,12 +1223,17 @@ class DocumentService:
         
         Returns:
             Dict[str, int]: Diccionario con username como clave y conteo como valor
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.count_by_user()
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al contar documentos por usuario: {str(e)}")
-            return {}
+            raise DatabaseException("Error al contar documentos por usuario", original_error=e)
     
     def get_documents_count_by_type(self) -> Dict[str, int]:
         """
@@ -1070,9 +1241,14 @@ class DocumentService:
         
         Returns:
             Dict[str, int]: Diccionario con content_type como clave y conteo como valor
+            
+        Raises:
+            DatabaseException: Si hay error de base de datos
         """
         try:
             return self.document_repo.count_by_content_type()
+        except DatabaseException:
+            raise
         except Exception as e:
             logger.error(f"Error al contar documentos por tipo: {str(e)}")
-            return {}
+            raise DatabaseException("Error al contar documentos por tipo", original_error=e)

@@ -1,5 +1,10 @@
 class ApiConfig {
   static const String baseUrl = 'http://localhost:2690/api';
+  
+  // WebSocket configuration
+  static const String wsBase = 'ws://localhost:2690/api';  // Añadido para compatibilidad
+  static const String wsBaseUrl = 'ws://localhost:2690/api';
+  static const String wsBaseUrlSecure = 'wss://localhost:2690/api';
 
   // ------------------------------
   // STATISTICS ENDPOINTS
@@ -126,6 +131,56 @@ class ApiConfig {
   static String verifyDocumentIndex(int docId) =>
       '$documentsBase/$docId/verify-index'; // GET - si lo agregaste
 
+  // ------------------------------
+  // ADMIN ENDPOINTS
+  // ------------------------------
+  static const String adminBase = '$baseUrl/admin';
+  
+  // Admin - Documents endpoints
+  static const String adminDocuments = '$adminBase/documents'; // GET - Todos los documentos del sistema
+  static const String adminDocumentsStats = '$adminBase/documents/stats'; // GET - Estadísticas de documentos
+  
+  // Métodos helper para admin documents
+  static String adminDocumentsWithFilters({
+    int skip = 0,
+    int limit = 100,
+    String sortBy = 'created_at',
+    String order = 'desc',
+    int? userFilter,
+    String? contentTypeFilter,
+  }) {
+    var url = '$adminDocuments?skip=$skip&limit=$limit&sort_by=$sortBy&order=$order';
+    
+    if (userFilter != null) {
+      url += '&user_filter=$userFilter';
+    }
+    
+    if (contentTypeFilter != null) {
+      url += '&content_type_filter=$contentTypeFilter';
+    }
+    
+    return url;
+  }
+  
+  static String adminDocumentsStatsWithPeriod({
+    String timePeriod = 'all',
+    String groupBy = 'user',
+  }) {
+    return '$adminDocumentsStats?time_period=$timePeriod&group_by=$groupBy';
+  }
+  
+  static String deleteDocumentAdmin(int documentId, {bool force = false}) {
+    return '$adminBase/documents/$documentId?force=$force';
+  }
+  
+  // Admin - Other endpoints
+  static const String adminUsers = '$adminBase/users'; // GET - Todos los usuarios
+  static const String adminChats = '$adminBase/chats'; // GET - Todos los chats
+  static const String adminStats = '$adminBase/stats'; // GET - Estadísticas generales
+  
+  // Admin Panel - New dashboard endpoint
+  static const String adminPanelDashboard = '$baseUrl/admin-panel/dashboard'; // GET - Dashboard completo del panel
+  
   // ------------------------------
   // HELPER METHODS
   // ------------------------------

@@ -9,6 +9,7 @@ class User {
   final String email;
   final UserRole role;
   final String? avatar;
+  final String? token;
   final DateTime createdAt;
 
   const User({
@@ -17,6 +18,7 @@ class User {
     required this.email,
     required this.role,
     this.avatar,
+    this.token,
     required this.createdAt,
   });
 
@@ -29,6 +31,7 @@ class User {
       email: json['email'],
       role: json['is_admin'] == true ? UserRole.admin : UserRole.user,
       avatar: json['avatar_url'],
+      token: json['token'],
       createdAt: DateTime.parse(json['created_at']),
     );
   }
@@ -40,6 +43,7 @@ class User {
       'email': email,
       'role': role.name,
       'avatar': avatar,
+      'token': token,
       'created_at': createdAt.toIso8601String(),
     };
   }

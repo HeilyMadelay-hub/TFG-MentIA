@@ -8,6 +8,12 @@ import logging
 from src.models.domain import Message
 from src.config.database import get_supabase_client
 from src.utils.date_utils import get_safe_timestamp
+from src.utils.timezone_utils import get_utc_now, format_for_db
+from src.core.exceptions import (
+    NotFoundException,
+    DatabaseException,
+    ValidationException
+)
 
 
 # Configuración de logging
@@ -23,6 +29,21 @@ class MessageRepository:
     def __init__(self):
         """Inicializa el repositorio con el cliente de Supabase."""
         self.table_name = "messages"
+    
+    def get(self, message_id: int) -> Message:
+        """
+        Obtiene un mensaje por su ID.
+        
+        Args:
+            message_id: ID del mensaje
+            
+        Returns:
+            Message: El mensaje encontrado
+            
+        Raises:
+            NotFoundException: Si el mensaje no existe
+        """
+        return self.get_message_by_id(message_id)
     
     def create_message(self, chat_id: int, question: str, answer: Optional[str] = None) -> Message:
         """
@@ -65,11 +86,13 @@ class MessageRepository:
                 logger.info(f"Mensaje creado en chat {chat_id}")
                 return message
             else:
-                raise ValueError("No se pudo crear el mensaje")
+                raise DatabaseException("No se pudo crear el mensaje")
                 
+        except (DatabaseException, ValidationException):
+            raise
         except Exception as e:
             logger.error(f"Error al crear mensaje: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al crear mensaje: {str(e)}")
     
     def get_messages_by_chat(self, chat_id: int, limit: int = 100, skip: int = 0) -> List[Message]:
         """
@@ -111,9 +134,9 @@ class MessageRepository:
             
         except Exception as e:
             logger.error(f"Error al obtener mensajes del chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al obtener mensajes del chat: {str(e)}")
     
-    def get_message_by_id(self, message_id: int, chat_id: Optional[int] = None) -> Optional[Message]:
+    def get_message_by_id(self, message_id: int, chat_id: Optional[int] = None) -> Message:
         """
         Obtiene un mensaje específico por su ID.
         Opcionalmente puede verificar que pertenezca a un chat específico.
@@ -151,11 +174,34 @@ class MessageRepository:
                 
                 return message
             
-            return None
+            # No se encontró el mensaje
+            if chat_id is not None:
+                raise NotFoundException(f"Mensaje {message_id} no encontrado en el chat {chat_id}")
+            else:
+                raise NotFoundException("Mensaje", message_id)
             
+        except NotFoundException:
+            raise
         except Exception as e:
             logger.error(f"Error al obtener mensaje {message_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al obtener mensaje: {str(e)}")
+    
+    def exists(self, message_id: int, chat_id: Optional[int] = None) -> bool:
+        """
+        Verifica si un mensaje existe.
+        
+        Args:
+            message_id: ID del mensaje
+            chat_id: ID del chat (opcional, para verificación)
+            
+        Returns:
+            bool: True si existe, False si no
+        """
+        try:
+            self.get_message_by_id(message_id, chat_id)
+            return True
+        except NotFoundException:
+            return False
     
     def update_message(self, message_id: int, 
                        chat_id: int, 
@@ -173,8 +219,9 @@ class MessageRepository:
         """
         try:
             # Verificar que el mensaje existe
-            message = self.get_message_by_id(message_id, chat_id)
-            if not message:
+            try:
+                message = self.get_message_by_id(message_id, chat_id)
+            except NotFoundException:
                 logger.warning(f"Mensaje {message_id} no encontrado para actualización")
                 return None
             
@@ -204,9 +251,11 @@ class MessageRepository:
             
             return None
             
+        except NotFoundException:
+            return None
         except Exception as e:
             logger.error(f"Error al actualizar mensaje {message_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al actualizar mensaje: {str(e)}")
     
     def delete_message(self, message_id: int, chat_id: Optional[int] = None) -> bool:
         """
@@ -221,8 +270,9 @@ class MessageRepository:
         """
         try:
             # Verificar que el mensaje existe
-            message = self.get_message_by_id(message_id, chat_id)
-            if not message:
+            try:
+                message = self.get_message_by_id(message_id, chat_id)
+            except NotFoundException:
                 logger.warning(f"Mensaje {message_id} no encontrado para eliminación")
                 return False
             
@@ -245,9 +295,11 @@ class MessageRepository:
             
             return success
             
+        except NotFoundException:
+            return False
         except Exception as e:
             logger.error(f"Error al eliminar mensaje {message_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al eliminar mensaje: {str(e)}")
     
     def delete_messages_by_chat(self, chat_id: int) -> int:
         """
@@ -284,7 +336,7 @@ class MessageRepository:
             
         except Exception as e:
             logger.error(f"Error al eliminar mensajes del chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al eliminar mensajes del chat: {str(e)}")
     
     def search_messages(self, query: str, chat_id: Optional[int] = None, 
                        limit: int = 50) -> List[Message]:
@@ -356,7 +408,7 @@ class MessageRepository:
             
         except Exception as e:
             logger.error(f"Error al buscar mensajes con '{query}': {str(e)}")
-            raise
+            raise DatabaseException(f"Error al buscar mensajes: {str(e)}")
     
     def get_message_count_by_chat(self, chat_id: int) -> int:
         """
@@ -383,7 +435,7 @@ class MessageRepository:
             
         except Exception as e:
             logger.error(f"Error al contar mensajes del chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al contar mensajes del chat: {str(e)}")
     
     # ==================== MÉTODOS ADMINISTRATIVOS ====================
     
@@ -406,4 +458,4 @@ class MessageRepository:
             
         except Exception as e:
             logger.error(f"Error al contar todos los mensajes: {str(e)}")
-            return 0
+            raise DatabaseException(f"Error al contar todos los mensajes: {str(e)}")

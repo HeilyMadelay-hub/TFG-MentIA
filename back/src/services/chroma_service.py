@@ -1,5 +1,9 @@
 import chromadb
 from typing import List, Optional
+import logging
+from src.core.exceptions import ExternalServiceException, DatabaseException
+
+logger = logging.getLogger(__name__)
 
 class ChromaService:
     def __init__(self):
@@ -46,8 +50,8 @@ class ChromaService:
             return chunks
             
         except Exception as e:
-            print(f"Error buscando en ChromaDB: {e}")
-            return []
+            logger.error(f"Error buscando en ChromaDB: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error en búsqueda de ChromaDB: {str(e)}")
     
     async def add_document_chunks(
         self,
@@ -75,5 +79,5 @@ class ChromaService:
             )
             
         except Exception as e:
-            print(f"Error agregando chunks a ChromaDB: {e}")
-            raise
+            logger.error(f"Error agregando chunks a ChromaDB: {str(e)}", exc_info=True)
+            raise DatabaseException(f"Error agregando documentos a ChromaDB: {str(e)}")

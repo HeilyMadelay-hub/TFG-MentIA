@@ -56,10 +56,12 @@ from chromadb.utils import embedding_functions
 import os
 import uuid
 from typing import List, Dict, Any, Optional
-import logging
+from src.core.logging_config import get_logger
+from src.core.exceptions import ExternalServiceException, DatabaseException
+from src.config.settings import get_settings
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+settings = get_settings()
 
 
 def load_env_file():
@@ -95,8 +97,13 @@ class ChromaDBConnector:
                 from src.config.settings import get_settings
                 settings = get_settings()
                 
-                host = settings.CHROMA_HOST
-                port = settings.CHROMA_PORT
+                # Detectar si estamos en Docker
+                import os
+                in_docker = os.environ.get('DOCKER_ENV', 'false').lower() == 'true'
+                
+                # Si estamos en Docker, usar el nombre del servicio
+                host = 'chromadb' if in_docker else settings.CHROMA_HOST
+                port = 8000 if in_docker else settings.CHROMA_PORT  # Puerto interno en Docker
                 
                 logger.info(f"Conectando a ChromaDB en {host}:{port}")
                 
@@ -112,12 +119,12 @@ class ChromaDBConnector:
                     logger.info("✅ Conexión exitosa a ChromaDB!")
                     self._ensure_collection_exists("documents")
                 except Exception as connection_error:
-                    logger.error(f"Error al conectar con ChromaDB: {str(connection_error)}")
-                    self._client = None
+                    logger.error(f"Error al conectar con ChromaDB: {str(connection_error)}", exc_info=True)
+                    raise ExternalServiceException(f"No se pudo conectar a ChromaDB: {str(connection_error)}")
                     
             except Exception as e:
-                logger.error(f"Error al inicializar cliente ChromaDB: {str(e)}")
-                self._client = None
+                logger.error(f"Error al inicializar cliente ChromaDB: {str(e)}", exc_info=True)
+                raise ExternalServiceException(f"Error inicializando ChromaDB: {str(e)}")
                 
         return self._client
         
@@ -133,8 +140,8 @@ class ChromaDBConnector:
             logger.info("Conexión a ChromaDB exitosa")
             return True
         except Exception as e:
-            print(f"Error con ChromaDB: {str(e)}")
-            return False
+            logger.error(f"Error con ChromaDB: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error en la conexión a ChromaDB: {str(e)}")
 
 #---------------------------------------------------------
 
@@ -220,19 +227,21 @@ class ChromaDBConnector:
                 
                 try:
                     # Esperar hasta timeout
-                    result = future.result(timeout=35)
+                    result = future.result(timeout=settings.CHROMA_OPERATION_TIMEOUT)
                     chroma_time = time.time() - start_time
                     logger.info(f"⏱️ ChromaDB: Añadidos {len(chunks)} chunks en {chroma_time:.3f} segundos")
                     logger.info(f"✅ Añadidos {len(chunks)} chunks a ChromaDB en {collection_name}")
                     return True
                 except concurrent.futures.TimeoutError:
-                    logger.error(f"⚠️ TIMEOUT de {timeout}s al añadir documentos a ChromaDB")
-                    return False
+                    logger.error(f"⚠️ TIMEOUT de {settings.CHROMA_OPERATION_TIMEOUT}s al añadir documentos a ChromaDB")
+                    raise ExternalServiceException(f"Timeout al añadir documentos a ChromaDB ({settings.CHROMA_OPERATION_TIMEOUT}s)")
                 
+        except ExternalServiceException:
+            raise  # Re-lanzar excepciones ya manejadas
         except Exception as e:
             error_time = time.time() - start_time
-            logger.error(f"❌ Error en ChromaDB después de {error_time:.3f} segundos: {str(e)}")
-            return False
+            logger.error(f"❌ Error en ChromaDB después de {error_time:.3f} segundos: {str(e)}", exc_info=True)
+            raise DatabaseException(f"Error al añadir documentos a ChromaDB: {str(e)}")
     
 #--------------------------------------------------
   
@@ -261,8 +270,8 @@ class ChromaDBConnector:
             )
             return results
         except Exception as e:
-            logger.error(f"Error al buscar documentos: {str(e)}")
-            return None
+            logger.error(f"Error al buscar documentos: {str(e)}", exc_info=True)
+            raise ExternalServiceException(f"Error en la búsqueda de ChromaDB: {str(e)}")
     
 #--------------------------------------------------
 
@@ -284,8 +293,8 @@ class ChromaDBConnector:
             logger.info(f"Documento {document_id} actualizado en {collection_name}")
             return True
         except Exception as e:
-            print(f"Error al actualizar documento: {str(e)}")
-            return False
+            logger.error(f"Error al actualizar documento: {str(e)}", exc_info=True)
+            raise DatabaseException(f"Error al actualizar documento en ChromaDB: {str(e)}")
 
 
 #---------------------------------------------------------
@@ -299,8 +308,8 @@ class ChromaDBConnector:
             logger.info(f"Eliminados {len(document_ids)} documentos de {collection_name}")
             return True
         except Exception as e:
-            print(f"Error al eliminar documentos: {str(e)}")
-            return False
+            logger.error(f"Error al eliminar documentos: {str(e)}", exc_info=True)
+            raise DatabaseException(f"Error al eliminar documentos de ChromaDB: {str(e)}")
 
 
 #---------------------------------------------------------
@@ -316,6 +325,55 @@ class ChromaDBConnector:
         except Exception as e:
             logger.error(f"Error al obtener documento: {str(e)}")
             return None
+    
+    def search_relevant_chunks(self, 
+                             query: str,
+                             document_ids: List[int],
+                             n_results: int = 5,
+                             collection_name: str = "documents") -> List[Dict[str, Any]]:
+        """
+        Busca chunks relevantes en documentos específicos
+        
+        Args:
+            query: Texto de búsqueda
+            document_ids: Lista de IDs de documentos
+            n_results: Número de resultados a retornar
+            collection_name: Nombre de la colección
+            
+        Returns:
+            Lista de chunks con su contenido y metadata
+        """
+        try:
+            # Construir filtro where para ChromaDB
+            where = {
+                "document_id": {
+                    "$in": [str(doc_id) for doc_id in document_ids]
+                }
+            }
+            
+            # Realizar búsqueda
+            results = self.search_documents(
+                collection_name=collection_name,
+                query_text=query,
+                n_results=n_results,
+                where=where
+            )
+            
+            # Formatear resultados
+            formatted_results = []
+            if results and 'documents' in results:
+                for i in range(len(results['documents'][0])):
+                    formatted_results.append({
+                        'content': results['documents'][0][i],
+                        'metadata': results['metadatas'][0][i] if 'metadatas' in results else {},
+                        'distance': results['distances'][0][i] if 'distances' in results else 0
+                    })
+            
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Error buscando chunks relevantes: {str(e)}")
+            return []
 
 # Función auxiliar para obtener el conector
 def get_chromadb_connector():

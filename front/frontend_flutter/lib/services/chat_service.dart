@@ -1,33 +1,15 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'api_client.dart';
 import '../config/api_config.dart';
 import '../models/chat.dart';
+import '../utils/logger.dart';
 
 class ChatService {
-  static const String _tokenKey = 'auth_token';
-
-  // Obtener el token de autenticación
-  Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
-  }
-
-  // Configurar headers con autenticación
-  Future<Map<String, String>> _getHeaders() async {
-    final token = await _getToken();
-    if (token == null) {
-      throw Exception('No authentication token found');
-    }
-
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-    };
-  }
+  final ApiClient _apiClient = apiClient;
+  final Logger _logger = Logger('ChatService');
 
   // Alias para compatibilidad - llama a listChats
-  Future<List<ChatModel>> getChats({
+  Future<List<Chat>> getChats({
     int skip = 0,
     int limit = 100,
     String? sortBy,
@@ -42,129 +24,91 @@ class ChatService {
   }
 
   // Crear un nuevo chat
-  Future<ChatModel> createChat({String? name}) async {
+  Future<Chat> createChat({String? name}) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.post(
-        Uri.parse(ApiConfig.createChat),
-        headers: headers,
-        body: json.encode({
+      final response = await _apiClient.post(
+        ApiConfig.createChat,
+        body: {
           'name_chat': name ?? 'Nueva conversación',
-        }),
+        },
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonData = json.decode(response.body);
-        return ChatModel.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to create chat: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return Chat.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al crear chat: ${e.message}');
+      }
       throw Exception('Error creating chat: $e');
     }
   }
 
   // Listar todos los chats del usuario
-  Future<List<ChatModel>> listChats({
+  Future<List<Chat>> listChats({
     int skip = 0,
     int limit = 100,
     String? sortBy,
     String? order,
   }) async {
     try {
-      print('🔄 Cargando chats...');
-      final headers = await _getHeaders();
-      print('📤 Headers obtenidos para chats');
+      _logger.info('🔄 Cargando chats...');
       
-      // Construir la URL con parámetros de paginación y ordenamiento
-      String url = ApiConfig.listChats;
+      // Construir parámetros de consulta
       final params = <String, String>{};
-      
       params['skip'] = skip.toString();
       params['limit'] = limit.toString();
       if (sortBy != null) params['sort_by'] = sortBy;
       if (order != null) params['order'] = order;
       
-      if (params.isNotEmpty) {
-        url = '$url?${params.entries.map((e) => '${e.key}=${e.value}').join('&')}';
-      }
-      
-      print('🌐 URL chats: $url');
-      
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          print('❌ Timeout al cargar chats');
-          throw Exception('Timeout al cargar chats');
-        },
+      final response = await _apiClient.get(
+        ApiConfig.listChats,
+        queryParams: params,
       );
 
-      print('📥 Response status chats: ${response.statusCode}');
+      _logger.info('📥 Response status chats: ${response.statusCode}');
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        print('✅ Chats cargados: ${jsonList.length}');
-        return jsonList.map((json) => ChatModel.fromJson(json)).toList();
-      } else if (response.statusCode == 401) {
-        print('❌ Error de autenticación en chats');
-        throw Exception('No autenticado o token inválido');
-      } else {
-        print('❌ Error del servidor para chats: ${response.statusCode}');
-        print('📥 Response body chats: ${response.body}');
-        throw Exception('Failed to load chats: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      _logger.info('✅ Chats cargados: ${jsonList.length}');
+      return jsonList.map((json) => Chat.fromJson(json)).toList();
     } catch (e) {
-      print('❌ Error completo al cargar chats: $e');
-      // Re-lanzar errores de autenticación para que sean manejados arriba
-      if (e.toString().contains('No authentication token') || 
-          e.toString().contains('401') ||
-          e.toString().contains('No autenticado')) {
-        throw Exception('No autenticado o token inválido');
+      _logger.error('❌ Error completo al cargar chats: $e');
+      if (e is ApiException) {
+        if (e.statusCode == 401 || e.errorCode == 'SESSION_EXPIRED') {
+          throw Exception('No autenticado o token inválido');
+        }
+        throw Exception('Error al cargar chats: ${e.message}');
       }
       throw Exception('Error loading chats: $e');
     }
   }
 
   // Obtener un chat específico
-  Future<ChatModel> getChat(int chatId) async {
+  Future<Chat> getChat(int chatId) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.get(
-        Uri.parse(ApiConfig.chatById(chatId)),
-        headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return ChatModel.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to get chat: ${response.body}');
-      }
+      final response = await _apiClient.get(ApiConfig.chatById(chatId));
+      final jsonData = json.decode(response.body);
+      return Chat.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al obtener chat: ${e.message}');
+      }
       throw Exception('Error getting chat: $e');
     }
   }
 
   // Renombrar un chat
-  Future<ChatModel> renameChat(int chatId, String newName) async {
+  Future<Chat> renameChat(int chatId, String newName) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.put(
-        Uri.parse(ApiConfig.renameChat(chatId)),
-        headers: headers,
-        body: json.encode({'name': newName}),
+      final response = await _apiClient.put(
+        ApiConfig.renameChat(chatId),
+        body: {'name': newName},
       );
-
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return ChatModel.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to rename chat: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return Chat.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al renombrar chat: ${e.message}');
+      }
       throw Exception('Error renaming chat: $e');
     }
   }
@@ -172,18 +116,12 @@ class ChatService {
   // Eliminar un chat
   Future<bool> deleteChat(int chatId) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.delete(
-        Uri.parse(ApiConfig.deleteChat(chatId)),
-        headers: headers,
-      );
-
-      if (response.statusCode == 204 || response.statusCode == 200) {
-        return true;
-      } else {
-        throw Exception('Failed to delete chat: ${response.body}');
-      }
+      await _apiClient.delete(ApiConfig.deleteChat(chatId));
+      return true;
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al eliminar chat: ${e.message}');
+      }
       throw Exception('Error deleting chat: $e');
     }
   }
@@ -196,7 +134,6 @@ class ChatService {
     int nResults = 5,
   }) async {
     try {
-      final headers = await _getHeaders();
       final body = <String, dynamic>{
         'question': message,
         'n_results': nResults,
@@ -206,19 +143,17 @@ class ChatService {
         body['document_ids'] = documentIds;
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.sendMessage(chatId)),
-        headers: headers,
-        body: json.encode(body),
+      final response = await _apiClient.post(
+        ApiConfig.sendMessage(chatId),
+        body: body,
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonData = json.decode(response.body);
-        return ChatMessage.fromJson(jsonData);
-      } else {
-        throw Exception('Failed to send message: ${response.body}');
-      }
+      final jsonData = json.decode(response.body);
+      return ChatMessage.fromJson(jsonData);
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al enviar mensaje: ${e.message}');
+      }
       throw Exception('Error sending message: $e');
     }
   }
@@ -242,23 +177,20 @@ class ChatService {
     int limit = 100,
   }) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.get(
-        Uri.parse(ApiConfig.getPaginatedEndpoint(
-          ApiConfig.listMessages(chatId),
-          skip: skip,
-          limit: limit,
-        )),
-        headers: headers,
+      final response = await _apiClient.get(
+        ApiConfig.listMessages(chatId),
+        queryParams: {
+          'skip': skip.toString(),
+          'limit': limit.toString(),
+        },
       );
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to load messages: ${response.body}');
-      }
+      final List<dynamic> jsonList = json.decode(response.body);
+      return jsonList.cast<Map<String, dynamic>>();
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al cargar mensajes: ${e.message}');
+      }
       throw Exception('Error loading messages: $e');
     }
   }
@@ -266,18 +198,12 @@ class ChatService {
   // Eliminar un mensaje
   Future<bool> deleteMessage(int chatId, int messageId) async {
     try {
-      final headers = await _getHeaders();
-      final response = await http.delete(
-        Uri.parse(ApiConfig.deleteMessage(chatId, messageId)),
-        headers: headers,
-      );
-
-      if (response.statusCode == 204 || response.statusCode == 200) {
-        return true;
-      } else {
-        throw Exception('Failed to delete message: ${response.body}');
-      }
+      await _apiClient.delete(ApiConfig.deleteMessage(chatId, messageId));
+      return true;
     } catch (e) {
+      if (e is ApiException) {
+        throw Exception('Error al eliminar mensaje: ${e.message}');
+      }
       throw Exception('Error deleting message: $e');
     }
   }

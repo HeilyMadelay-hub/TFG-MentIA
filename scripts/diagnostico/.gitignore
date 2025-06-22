@@ -1,0 +1,9 @@
+# Ignorar archivos de debug y test temporales
+debug_*.py
+test_*.py
+ver_*.py
+verificar_*.py
+verificacion_*.py
+
+# Mantener este directorio pero ignorar su contenido de debug
+!.gitignore

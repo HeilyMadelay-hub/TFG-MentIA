@@ -1,15 +1,30 @@
-# Archivos de entorno
+# === ARCHIVOS DE ENTORNO ===
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
 
-# Archivos de Python
+# === PYTHON ===
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.pyc
+
+# === ENTORNOS VIRTUALES ===
+venv/
 env/
+ENV/
+.venv/
+.virtualenv/
+
+# === DEPENDENCIAS ===
+pip-log.txt
+pip-delete-this-directory.txt
+
+# === DISTRIBUCIÓN ===
 build/
 develop-eggs/
 dist/
@@ -25,25 +40,66 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Entornos virtuales
-venv/
-ENV/
-.venv/
+# === PYTEST ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
 
-# IDEs y editores
+# === JUPYTER ===
+.ipynb_checkpoints
+*.ipynb
+
+# === IDEs ===
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+.DS_Store
 
-# Logs y bases de datos
+# === LOGS ===
 *.log
+logs/
+*.log.*
+
+# === BASES DE DATOS LOCALES ===
+*.db
 *.sqlite
+*.sqlite3
 
+# === ARCHIVOS SUBIDOS ===
+uploads/*
+!uploads/.gitkeep
 
-#El env al ponerlo en gitignore:
-#Hace que nuestras credenciales están seguras
-#No se suban archivos innecesarios al repositorio
-#Se mantenga el repositorio limpio y profesional
+# === CHROMADB LOCAL (no usado, pero por si acaso) ===
+chroma-data/
+.chroma/
+
+# === ARCHIVOS TEMPORALES ===
+*.tmp
+*.temp
+.temp/
+tmp/
+
+# === BACKUPS ===
+*.backup
+*.bak
+*_backup/
+backup_*/
+
+# === CERTIFICADOS Y CLAVES ===
+*.pem
+*.key
+*.crt
+*.p12
+
+# === DOCKER ===
+.dockerignore.local
+
+# === SISTEMA ===
+Thumbs.db
+desktop.ini

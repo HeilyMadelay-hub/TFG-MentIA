@@ -7,9 +7,16 @@ import logging
 from datetime import datetime
 from src.models.domain import Chat
 from src.config.database import get_supabase_client
+from src.core.exceptions import (
+    NotFoundException,
+    DatabaseException,
+    ValidationException
+)
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
+from src.utils.timezone_utils import get_utc_now, format_for_db
+
 logger = logging.getLogger(__name__)
 
 class ChatRepository:
@@ -21,6 +28,21 @@ class ChatRepository:
     def __init__(self):
         """Inicializa el repositorio con el cliente de Supabase."""
         self.table_name = "chats"
+    
+    def get(self, chat_id: int) -> Chat:
+        """
+        Obtiene un chat por su ID.
+        
+        Args:
+            chat_id: ID del chat
+            
+        Returns:
+            Chat: El chat encontrado
+            
+        Raises:
+            NotFoundException: Si el chat no existe
+        """
+        return self.get_chat_by_id(chat_id)
     
     def create_chat(self, name_chat: str, user_id: int) -> Chat:
         """
@@ -40,8 +62,8 @@ class ChatRepository:
             # Preparar datos para inserción
             chat_data = {
                 "name_chat": name_chat,
-                "id_user": user_id
-                # No incluir created_at, dejar que Supabase use su valor por defecto
+                "id_user": user_id,
+                "created_at": format_for_db(get_utc_now())  # Especificar UTC explícitamente
             }
             
             # Insertar en Supabase
@@ -61,11 +83,13 @@ class ChatRepository:
                 logger.info(f"Chat '{name_chat}' creado para usuario {user_id}")
                 return chat
             else:
-                raise ValueError("No se pudo crear el chat")
+                raise DatabaseException("No se pudo crear el chat")
                 
+        except (DatabaseException, ValidationException):
+            raise
         except Exception as e:
             logger.error(f"Error al crear chat: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al crear chat: {str(e)}")
     
     def get_chats_by_user(self, user_id: int, limit: int = 100, skip: int = 0, sort_by: str = 'updated_at', order: str = 'desc') -> List[Chat]:
         """
@@ -115,9 +139,9 @@ class ChatRepository:
             
         except Exception as e:
             logger.error(f"Error al obtener chats del usuario {user_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al obtener chats del usuario: {str(e)}")
     
-    def get_chat_by_id(self, chat_id: int, user_id: Optional[int] = None) -> Optional[Chat]:
+    def get_chat_by_id(self, chat_id: int, user_id: Optional[int] = None) -> Chat:
         """
         Obtiene un chat específico por su ID.
         Opcionalmente puede verificar que pertenezca a un usuario específico.
@@ -154,11 +178,34 @@ class ChatRepository:
                 
                 return chat
             
-            return None
+            # No se encontró el chat
+            if user_id is not None:
+                raise NotFoundException(f"Chat {chat_id} no encontrado para el usuario {user_id}")
+            else:
+                raise NotFoundException("Chat", chat_id)
             
+        except NotFoundException:
+            raise
         except Exception as e:
             logger.error(f"Error al obtener chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al obtener chat: {str(e)}")
+    
+    def exists(self, chat_id: int, user_id: Optional[int] = None) -> bool:
+        """
+        Verifica si un chat existe.
+        
+        Args:
+            chat_id: ID del chat
+            user_id: ID del usuario (opcional, para verificación)
+            
+        Returns:
+            bool: True si existe, False si no
+        """
+        try:
+            self.get_chat_by_id(chat_id, user_id)
+            return True
+        except NotFoundException:
+            return False
     
     def update_chat(self, chat_id: int, user_id: int, data: Dict[str, Any]) -> Optional[Chat]:
         """
@@ -174,8 +221,9 @@ class ChatRepository:
         """
         try:
             # Verificar que el chat existe y pertenece al usuario
-            chat = self.get_chat_by_id(chat_id, user_id)
-            if not chat:
+            try:
+                chat = self.get_chat_by_id(chat_id, user_id)
+            except NotFoundException:
                 logger.warning(f"Chat {chat_id} no encontrado para actualización")
                 return None
             
@@ -204,9 +252,11 @@ class ChatRepository:
             
             return None
             
+        except NotFoundException:
+            return None
         except Exception as e:
             logger.error(f"Error al actualizar chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al actualizar chat: {str(e)}")
     
     def delete_chat(self, chat_id: int, user_id: int) -> bool:
         """
@@ -221,8 +271,9 @@ class ChatRepository:
         """
         try:
             # Verificar que el chat existe y pertenece al usuario
-            chat = self.get_chat_by_id(chat_id, user_id)
-            if not chat:
+            try:
+                chat = self.get_chat_by_id(chat_id, user_id)
+            except NotFoundException:
                 logger.warning(f"Chat {chat_id} no encontrado para eliminación")
                 return False
             
@@ -243,9 +294,11 @@ class ChatRepository:
             
             return success
             
+        except NotFoundException:
+            return False
         except Exception as e:
             logger.error(f"Error al eliminar chat {chat_id}: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al eliminar chat: {str(e)}")
     
     # ==================== MÉTODOS ADMINISTRATIVOS ====================
     
@@ -296,7 +349,7 @@ class ChatRepository:
             
         except Exception as e:
             logger.error(f"Error al obtener todos los chats: {str(e)}")
-            raise
+            raise DatabaseException(f"Error al obtener todos los chats: {str(e)}")
     
     def count_all_chats(self) -> int:
         """
@@ -317,7 +370,7 @@ class ChatRepository:
             
         except Exception as e:
             logger.error(f"Error al contar chats: {str(e)}")
-            return 0
+            raise DatabaseException(f"Error al contar chats: {str(e)}")
     
     def count_chats_by_user(self) -> Dict[str, int]:
         """
@@ -347,7 +400,7 @@ class ChatRepository:
             
         except Exception as e:
             logger.error(f"Error al contar chats por usuario: {str(e)}")
-            return {}
+            raise DatabaseException(f"Error al contar chats por usuario: {str(e)}")
     
     def count_active_chats(self, hours: int = 24) -> int:
         """
@@ -384,4 +437,4 @@ class ChatRepository:
             
         except Exception as e:
             logger.error(f"Error al contar chats activos: {str(e)}")
-            return 0
+            raise DatabaseException(f"Error al contar chats activos: {str(e)}")

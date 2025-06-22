@@ -513,7 +513,6 @@ FROM information_schema.columns
 WHERE table_name = 'acceso_documentos_usuario'
 ORDER BY ordinal_position;
 
-
 -- PRIMERO: Agregar las columnas
 ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP WITH TIME ZONE;
@@ -746,3 +745,461 @@ SELECT
 FROM documents d
 JOIN users u ON d.uploaded_by = u.id
 JOIN acceso_documentos_usuario a ON d.id = a.id_document;
+
+CREATE POLICY "Users can upload their own files" ON storage.objects
+FOR INSERT WITH CHECK (
+  auth.uid() IS NOT NULL AND
+  bucket_id = 'documents'
+);
+
+-- Permitir a usuarios ver sus propios archivos
+CREATE POLICY "Users can view their own files" ON storage.objects
+FOR SELECT USING (
+  auth.uid() IS NOT NULL AND
+  bucket_id = 'documents'
+);
+
+-- Permitir a usuarios eliminar sus propios archivos
+CREATE POLICY "Users can delete their own files" ON storage.objects
+FOR DELETE USING (
+  auth.uid() IS NOT NULL AND
+  bucket_id = 'documents'
+);
+
+ALTER TABLE documents DISABLE ROW LEVEL SECURITY;
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE acceso_documentos_usuario DISABLE ROW LEVEL SECURITY;
+ALTER TABLE chats DISABLE ROW LEVEL SECURITY;
+ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
+
+DELETE FROM users WHERE id = 44;
+
+
+-- 1. Crear la partición para junio 2025
+CREATE TABLE IF NOT EXISTS messages_y2025m06 PARTITION OF messages
+FOR VALUES FROM ('2025-06-01') TO ('2025-07-01');
+
+-- 2. Habilitar Row Level Security
+ALTER TABLE messages_y2025m06 ENABLE ROW LEVEL SECURITY;
+
+-- 3. Crear política de seguridad
+CREATE POLICY messages_y2025m06_policy ON messages_y2025m06
+    USING (EXISTS (SELECT 1 FROM chats 
+                  WHERE id = messages_y2025m06.id_chat AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())));
+
+-- 4. Verificar que se creó correctamente
+SELECT 
+    schemaname,
+    tablename,
+    tableowner
+FROM pg_tables 
+WHERE tablename = 'messages_y2025m06';
+
+-- 5. También crear particiones para los próximos meses si es necesario
+-- Julio 2025
+CREATE TABLE IF NOT EXISTS messages_y2025m07 PARTITION OF messages
+FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
+
+ALTER TABLE messages_y2025m07 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY messages_y2025m07_policy ON messages_y2025m07
+    USING (EXISTS (SELECT 1 FROM chats 
+                  WHERE id = messages_y2025m07.id_chat AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())));
+
+-- Agosto 2025
+CREATE TABLE IF NOT EXISTS messages_y2025m08 PARTITION OF messages
+FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
+
+ALTER TABLE messages_y2025m08 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY messages_y2025m08_policy ON messages_y2025m08
+    USING (EXISTS (SELECT 1 FROM chats 
+                  WHERE id = messages_y2025m08.id_chat AND 
+                        id_user IN (SELECT id FROM users WHERE auth_id = auth.uid())));
+
+-- Verificar todas las particiones creadas
+SELECT 
+    parent.relname AS parent_table,
+    child.relname AS partition_name,
+    pg_get_expr(child.relpartbound, child.oid) AS partition_range
+FROM pg_inherits
+JOIN pg_class parent ON pg_inherits.inhparent = parent.oid
+JOIN pg_class child ON pg_inherits.inhrelid = child.oid
+WHERE parent.relname = 'messages'
+ORDER BY child.relname;
+
+
+ALTER TABLE documents 
+ADD COLUMN is_shared BOOLEAN DEFAULT FALSE NOT NULL;
+
+
+-- Migración: Agregar columna is_shared a la tabla documents
+-- Fecha: 2025-06-18
+
+-- Agregar la columna is_shared con valor por defecto false
+ALTER TABLE documents 
+ADD COLUMN is_shared BOOLEAN DEFAULT FALSE NOT NULL;
+
+
+
+-- 2. Actualizar documentos existentes que ya están compartidos
+-- CORRECCIÓN: Usar la tabla correcta 'acceso_documentos_usuario' en lugar de 'document_shares'
+UPDATE documents 
+SET is_shared = TRUE 
+WHERE id IN (
+    SELECT DISTINCT id_document 
+    FROM acceso_documentos_usuario
+);
+
+-- 3. Crear función para actualizar automáticamente is_shared cuando se comparte/descomparte
+CREATE OR REPLACE FUNCTION update_document_shared_status()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Actualizar el estado de compartido del documento
+    UPDATE documents 
+    SET is_shared = (
+        EXISTS (
+            SELECT 1 
+            FROM acceso_documentos_usuario 
+            WHERE id_document = COALESCE(NEW.id_document, OLD.id_document)
+        )
+    )
+    WHERE id = COALESCE(NEW.id_document, OLD.id_document);
+    
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4. Crear triggers para mantener actualizada la columna is_shared
+DROP TRIGGER IF EXISTS trigger_update_shared_on_insert ON acceso_documentos_usuario;
+CREATE TRIGGER trigger_update_shared_on_insert
+    AFTER INSERT ON acceso_documentos_usuario
+    FOR EACH ROW
+    EXECUTE FUNCTION update_document_shared_status();
+
+DROP TRIGGER IF EXISTS trigger_update_shared_on_delete ON acceso_documentos_usuario;
+CREATE TRIGGER trigger_update_shared_on_delete
+    AFTER DELETE ON acceso_documentos_usuario
+    FOR EACH ROW
+    EXECUTE FUNCTION update_document_shared_status();
+
+-- 5. Crear índice para mejorar rendimiento
+CREATE INDEX IF NOT EXISTS idx_documents_is_shared ON documents(is_shared);
+
+-- 6. Verificar la migración y mostrar resultados
+SELECT 
+    'Columna is_shared agregada correctamente' as status,
+    count(*) as total_documents,
+    sum(case when is_shared then 1 else 0 end) as shared_documents,
+    sum(case when not is_shared then 1 else 0 end) as not_shared_documents
+FROM documents;
+
+-- 7. Mostrar documentos compartidos para verificación
+SELECT 
+    d.id,
+    d.title,
+    d.is_shared,
+    count(a.id_user) as usuarios_con_acceso
+FROM documents d
+LEFT JOIN acceso_documentos_usuario a ON d.id = a.id_document
+GROUP BY d.id, d.title, d.is_shared
+ORDER BY d.id;
+
+-- 8. Verificar que los triggers funcionan correctamente
+SELECT 
+    trigger_name,
+    event_manipulation,
+    action_timing,
+    action_statement
+FROM information_schema.triggers 
+WHERE event_object_table = 'acceso_documentos_usuario'
+  AND trigger_name LIKE '%shared%';
+
+
+
+
+CREATE OR REPLACE FUNCTION get_shared_documents_count(target_user_id INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    shared_count INTEGER;
+BEGIN
+    -- Contar documentos compartidos CON el usuario que NO son de su propiedad
+    SELECT COUNT(*)
+    INTO shared_count
+    FROM acceso_documentos_usuario adu
+    INNER JOIN documents d ON adu.id_document = d.id
+    WHERE adu.id_user = target_user_id 
+    AND d.uploaded_by != target_user_id;
+    
+    RETURN COALESCE(shared_count, 0);
+END;
+$$;
+
+-- ===============================================
+-- PASO 2: Dar permisos necesarios
+-- ===============================================
+
+GRANT EXECUTE ON FUNCTION get_shared_documents_count(INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION get_shared_documents_count(INTEGER) TO authenticated;
+
+-- ===============================================
+-- PASO 3: Verificar estado actual de datos
+-- ===============================================
+
+-- Ver todos los usuarios
+SELECT id, username, email FROM users ORDER BY id;
+
+-- Ver todos los documentos
+SELECT id, title, uploaded_by, is_shared FROM documents ORDER BY id;
+
+-- Ver todos los accesos compartidos
+SELECT * FROM acceso_documentos_usuario ORDER BY id_document, id_user;
+
+-- ===============================================
+-- PASO 4: Probar la función con casos reales
+-- ===============================================
+
+-- Ejemplo: Probar con usuario 47 (o cambiar por el ID real del usuario H)
+SELECT get_shared_documents_count(47) as documentos_compartidos_con_usuario_47;
+
+-- Probar con todos los usuarios para ver quién tiene documentos compartidos
+SELECT 
+    u.id as user_id,
+    u.username,
+    get_shared_documents_count(u.id) as documentos_compartidos
+FROM users u
+ORDER BY u.id;
+
+-- ===============================================
+-- PASO 5: Verificar manualmente un caso específico
+-- ===============================================
+
+-- Ver documentos compartidos CON el usuario 47 (cambiar por el ID real)
+SELECT 
+    d.id,
+    d.title,
+    d.uploaded_by,
+    u_owner.username as propietario,
+    'Compartido CON usuario 47' as estado
+FROM acceso_documentos_usuario adu
+JOIN documents d ON adu.id_document = d.id
+JOIN users u_owner ON d.uploaded_by = u_owner.id
+WHERE adu.id_user = 47  -- Cambiar por el ID del usuario H
+AND d.uploaded_by != 47; -- Excluir documentos que son del propio usuario
+
+-- ===============================================
+-- PASO 6: Crear datos de prueba si es necesario
+-- ===============================================
+
+-- Solo ejecutar si no hay datos de prueba suficientes
+-- NOTA: Cambiar los IDs por valores reales de tu base de datos
+
+-- Ejemplo de cómo crear datos de prueba:
+-- INSERT INTO acceso_documentos_usuario (id_document, id_user) 
+-- VALUES (54, 47) -- Compartir documento 54 con usuario 47
+-- ON CONFLICT (id_document, id_user) DO NOTHING;
+
+-- Verificar que se actualizó is_shared
+-- UPDATE documents SET is_shared = TRUE WHERE id = 54;
+
+-- ===============================================
+-- PASO 7: Verificación final
+-- ===============================================
+
+-- Verificar que todo está correcto
+SELECT 
+    'Resumen final' as tipo,
+    COUNT(*) as total_documentos,
+    SUM(CASE WHEN is_shared THEN 1 ELSE 0 END) as documentos_marcados_compartidos,
+    (SELECT COUNT(*) FROM acceso_documentos_usuario) as total_accesos_compartidos
+FROM documents;
+
+-- Mensaje de éxito
+SELECT 'Configuración completada exitosamente' as resultado;
+
+
+-- MIGRACIÓN: Corregir documentos compartidos existentes
+-- Fecha: 2025-06-18
+-- Propósito: Actualizar la columna is_shared para documentos que ya están compartidos
+
+-- 1. Verificar estado actual
+SELECT 
+    'Estado actual' as etapa,
+    count(*) as total_documentos,
+    sum(case when is_shared then 1 else 0 end) as compartidos,
+    sum(case when not is_shared then 1 else 0 end) as no_compartidos
+FROM documents;
+
+-- 2. Mostrar documentos que deberían estar marcados como compartidos
+SELECT 
+    d.id,
+    d.title,
+    d.is_shared as is_shared_actual,
+    count(a.id_user) as usuarios_con_acceso
+FROM documents d
+LEFT JOIN acceso_documentos_usuario a ON d.id = a.id_document
+GROUP BY d.id, d.title, d.is_shared
+HAVING count(a.id_user) > 0 AND d.is_shared = FALSE;
+
+-- 3. Actualizar documentos que están compartidos pero no marcados como tal
+UPDATE documents 
+SET is_shared = TRUE 
+WHERE id IN (
+    SELECT DISTINCT id_document 
+    FROM acceso_documentos_usuario
+) AND is_shared = FALSE;
+
+-- 4. Verificar documentos marcados como compartidos pero que ya no lo están
+UPDATE documents 
+SET is_shared = FALSE 
+WHERE id NOT IN (
+    SELECT DISTINCT id_document 
+    FROM acceso_documentos_usuario
+) AND is_shared = TRUE;
+
+-- 5. Verificar estado después de la corrección
+SELECT 
+    'Estado después de migración' as etapa,
+    count(*) as total_documentos,
+    sum(case when is_shared then 1 else 0 end) as compartidos,
+    sum(case when not is_shared then 1 else 0 end) as no_compartidos
+FROM documents;
+
+-- 6. Mostrar el estado final de cada documento
+SELECT 
+    d.id,
+    d.title,
+    d.uploaded_by,
+    d.is_shared,
+    count(a.id_user) as usuarios_con_acceso,
+    CASE 
+        WHEN count(a.id_user) > 0 AND d.is_shared = TRUE THEN 'Correcto'
+        WHEN count(a.id_user) = 0 AND d.is_shared = FALSE THEN 'Correcto'
+        ELSE 'Error'
+    END as estado_consistencia
+FROM documents d
+LEFT JOIN acceso_documentos_usuario a ON d.id = a.id_document
+GROUP BY d.id, d.title, d.uploaded_by, d.is_shared
+ORDER BY d.id;
+
+-- ===============================================
+-- SOLUCIÓN: Crear función para contar documentos compartidos POR el usuario
+-- ===============================================
+
+-- 1. Crear función que cuenta documentos que el usuario HA COMPARTIDO
+CREATE OR REPLACE FUNCTION get_documents_shared_by_user(user_id INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    shared_count INTEGER;
+BEGIN
+    -- Contar documentos del usuario que tienen accesos compartidos
+    SELECT COUNT(DISTINCT d.id)
+    INTO shared_count
+    FROM documents d
+    INNER JOIN acceso_documentos_usuario adu ON d.id = adu.id_document
+    WHERE d.uploaded_by = user_id;
+    
+    RETURN COALESCE(shared_count, 0);
+END;
+$$;
+
+-- 2. Modificar la función original para ser más clara en su propósito
+CREATE OR REPLACE FUNCTION get_documents_shared_with_user(target_user_id INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    shared_count INTEGER;
+BEGIN
+    -- Contar documentos compartidos CON el usuario que NO son de su propiedad
+    SELECT COUNT(DISTINCT adu.id_document)
+    INTO shared_count
+    FROM acceso_documentos_usuario adu
+    INNER JOIN documents d ON adu.id_document = d.id
+    WHERE adu.id_user = target_user_id 
+    AND d.uploaded_by != target_user_id;
+    
+    RETURN COALESCE(shared_count, 0);
+END;
+$$;
+
+-- 3. Crear una función que devuelva ambas métricas
+CREATE OR REPLACE FUNCTION get_user_sharing_stats(user_id INTEGER)
+RETURNS TABLE(
+    documents_shared_by_me INTEGER,
+    documents_shared_with_me INTEGER,
+    total_users_i_shared_with INTEGER
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        -- Documentos que YO he compartido
+        (SELECT COUNT(DISTINCT d.id)
+         FROM documents d
+         INNER JOIN acceso_documentos_usuario adu ON d.id = adu.id_document
+         WHERE d.uploaded_by = user_id)::INTEGER as documents_shared_by_me,
+        
+        -- Documentos compartidos CONMIGO
+        (SELECT COUNT(DISTINCT adu.id_document)
+         FROM acceso_documentos_usuario adu
+         INNER JOIN documents d ON adu.id_document = d.id
+         WHERE adu.id_user = user_id 
+         AND d.uploaded_by != user_id)::INTEGER as documents_shared_with_me,
+        
+        -- Número de usuarios únicos con los que he compartido
+        (SELECT COUNT(DISTINCT adu.id_user)
+         FROM documents d
+         INNER JOIN acceso_documentos_usuario adu ON d.id = adu.id_document
+         WHERE d.uploaded_by = user_id)::INTEGER as total_users_i_shared_with;
+END;
+$$;
+
+-- 4. Dar permisos necesarios
+GRANT EXECUTE ON FUNCTION get_documents_shared_by_user(INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION get_documents_shared_by_user(INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_documents_shared_with_user(INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION get_documents_shared_with_user(INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_user_sharing_stats(INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION get_user_sharing_stats(INTEGER) TO authenticated;
+
+-- 5. Verificar con Ivan (ID: 19)
+SELECT * FROM get_user_sharing_stats(19);
+
+-- 6. Ver detalles de lo que Ivan ha compartido
+SELECT 
+    d.id as doc_id,
+    d.title,
+    count(adu.id_user) as compartido_con_usuarios,
+    array_agg(u.username) as usuarios
+FROM documents d
+JOIN acceso_documentos_usuario adu ON d.id = adu.id_document
+JOIN users u ON adu.id_user = u.id
+WHERE d.uploaded_by = 19
+GROUP BY d.id, d.title;
+
+-- 7. Verificar para todos los usuarios
+SELECT 
+    u.id,
+    u.username,
+    stats.documents_shared_by_me as docs_compartidos_por_mi,
+    stats.documents_shared_with_me as docs_compartidos_conmigo,
+    stats.total_users_i_shared_with as usuarios_con_acceso
+FROM users u
+CROSS JOIN LATERAL get_user_sharing_stats(u.id) stats
+ORDER BY u.id;

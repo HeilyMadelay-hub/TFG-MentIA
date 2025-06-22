@@ -7,7 +7,7 @@ import '../services/document_service.dart';
 import '../services/auth_service.dart';
 
 class ChatScreen extends StatefulWidget {
-  final ChatModel? existingChat;
+  final Chat? existingChat;
   final List<Document>? selectedDocuments;
   final int? chatId;
   final String? chatName;
@@ -34,7 +34,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final AuthService _authService = AuthService();
 
   List<Map<String, dynamic>> _messages = [];
-  ChatModel? _currentChat;
+  Chat? _currentChat;
   bool _isLoading = false;
   bool _isSending = false;
   List<Document> _availableDocuments = [];
@@ -746,7 +746,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Última actualización: ${_currentChat?.updatedAt != null ? _formatDateTime(_currentChat!.updatedAt) : "N/A"}',
+                'Última actualización: ${_currentChat?.lastMessageAt != null ? _formatDateTime(_currentChat!.lastMessageAt) : "N/A"}',
               ),
               const SizedBox(height: 16),
               const Divider(),

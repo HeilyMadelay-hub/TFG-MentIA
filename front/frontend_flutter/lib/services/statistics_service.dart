@@ -2,10 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'base_service.dart';
+import 'api_client.dart';
 import '../config/api_config.dart';
 
-class StatisticsService extends BaseService {
+class StatisticsService {
+  final ApiClient _apiClient = apiClient;
+  
   static const String _cacheKey = 'cached_statistics';
   static const String _cacheTimeKey = 'cached_statistics_time';
   static const String _dashboardCacheKey = 'cached_dashboard';
@@ -54,18 +56,16 @@ class StatisticsService extends BaseService {
     try {
       debugPrint('🔄 Solicitando estadísticas a: ${ApiConfig.globalStatistics}');
       
-      // Usar endpoint público sin autenticación
-      final headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-      debugPrint('📤 Headers enviados (público): ${headers.keys.toList()}');
-      
+      // Usar endpoint público sin autenticación (no requiere ApiClient)
+      // Este endpoint es público y no requiere token
       final response = await http.get(
         Uri.parse(ApiConfig.globalStatistics),
-        headers: headers,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
       ).timeout(
-        const Duration(seconds: 3), // Reducido para responder más rápido
+        const Duration(seconds: 3),
         onTimeout: () {
           debugPrint('❌ Timeout al obtener estadísticas');
           throw Exception('Timeout al obtener estadísticas');
@@ -73,29 +73,29 @@ class StatisticsService extends BaseService {
       );
       
       debugPrint('📥 Respuesta recibida - Status: ${response.statusCode}');
-      debugPrint('📥 Body de respuesta: ${response.body}');
       
-      final data = handleResponse(response);
-      debugPrint('📊 Datos procesados: $data');
-      
-      // El backend devuelve directamente el objeto con las estadísticas
-      if (data != null && data is Map<String, dynamic>) {
-        final stats = {
-          'total_users': (data['total_users'] ?? 0) as int,
-          'total_documents': (data['total_documents'] ?? 0) as int,
-          'active_chats': (data['active_chats'] ?? 0) as int,
-        };
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('📊 Datos procesados: $data');
         
-        debugPrint('✅ Estadísticas procesadas correctamente: $stats');
-        
-        // Guardar en caché para uso futuro
-        await _saveStatisticsToCache(stats);
-        
-        return stats;
+        // El backend devuelve directamente el objeto con las estadísticas
+        if (data != null && data is Map<String, dynamic>) {
+          final stats = {
+            'total_users': (data['total_users'] ?? 0) as int,
+            'total_documents': (data['total_documents'] ?? 0) as int,
+            'active_chats': (data['active_chats'] ?? 0) as int,
+          };
+          
+          debugPrint('✅ Estadísticas procesadas correctamente: $stats');
+          
+          // Guardar en caché para uso futuro
+          await _saveStatisticsToCache(stats);
+          
+          return stats;
+        }
       }
       
-      debugPrint('❌ Formato de respuesta inválido: $data');
-      throw Exception('Invalid response format: $data');
+      throw Exception('Invalid response format');
       
     } catch (e) {
       debugPrint('❌ Error completo al obtener estadísticas: $e');
@@ -130,33 +130,23 @@ class StatisticsService extends BaseService {
         return cachedData;
       }
       
-      final headers = await getHeaders();
-      final response = await http.get(
-        Uri.parse(ApiConfig.dashboard),
-        headers: headers,
-      ).timeout(
-        const Duration(seconds: 3),
-        onTimeout: () {
-          debugPrint('⏱️ Timeout al obtener dashboard');
-          throw Exception('Timeout al obtener dashboard');
-        },
-      );
+      final response = await _apiClient.get(ApiConfig.dashboard);
       
       debugPrint('📥 Dashboard response: ${response.statusCode}');
       
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        
-        // Guardar en caché
-        await _saveDashboardToCache(data);
-        
-        return data;
-      } else {
-        // Si falla, intentar cargar datos por separado
-        return await _loadDashboardDataSeparately();
-      }
+      final data = json.decode(response.body);
+      
+      // Guardar en caché
+      await _saveDashboardToCache(data);
+      
+      return data;
     } catch (e) {
       debugPrint('❌ Error obteniendo dashboard: $e');
+      
+      // Si es error de autenticación, propagar
+      if (e is ApiException && (e.statusCode == 401 || e.errorCode == 'SESSION_EXPIRED')) {
+        rethrow;
+      }
       
       // Intentar cargar por separado como fallback
       return await _loadDashboardDataSeparately();

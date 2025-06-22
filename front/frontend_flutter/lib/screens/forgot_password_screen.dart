@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/http_service.dart';
+import '../utils/email_validator.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -35,7 +36,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           builder: (context) => AlertDialog(
             title: const Text('Email Enviado'),
             content: const Text(
-              'Si el email está registrado, recibirás instrucciones para restablecer tu contraseña.',
+              'Si el email está registrado, recibirás instrucciones para restablecer tu contraseña.\n\nRevisa tu bandeja de entrada y carpeta de spam.',
             ),
             actions: [
               TextButton(
@@ -168,15 +169,26 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
+                              helperText: 'Ingresa el email con el que te registraste',
+                              helperMaxLines: 2,
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
                                 return 'Por favor ingrese su email';
                               }
-                              if (!value.contains('@') ||
-                                  !value.contains('.')) {
-                                return 'Por favor ingrese un email válido';
+                              
+                              // Usar el validador personalizado
+                              final validation = EmailValidator.validate(value.trim());
+                              if (!(validation['isValid'] ?? false)) {
+                                final error = validation['error'] ?? 'Email inválido';
+                                final suggestion = validation['suggestion'];
+                                
+                                if (suggestion != null) {
+                                  return '$error\n¿Quisiste decir: $suggestion?';
+                                }
+                                return error;
                               }
+                              
                               return null;
                             },
                           ),

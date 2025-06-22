@@ -1,4 +1,0 @@
-admin:Ivan
-contraseña:ivan1234
-usuario:heily1857@gmail.com
-contaseña:paco1234
